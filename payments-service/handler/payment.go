@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 
 	// "log"
 	"net/http"
@@ -17,6 +18,18 @@ type PaymentJob struct {
 	Amount        float64
 	RequestedAt   time.Time
 	Attempt       int
+}
+
+var fastClient = &http.Client{
+	Timeout: 700 * time.Millisecond, // faster failover
+	Transport: &http.Transport{
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   100,
+		MaxConnsPerHost:       100,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   300 * time.Millisecond,
+		ExpectContinueTimeout: 0,
+	},
 }
 
 var (
@@ -109,7 +122,7 @@ func ProcessPayment(job PaymentJob, defaultChecker, fallbackChecker *health.Heal
 	req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := fastClient.Do(req)
 	if err != nil || resp.StatusCode >= 500 {
 		markProcessorAsFailing(processor, defaultChecker, fallbackChecker)
 		// Retry
@@ -131,9 +144,31 @@ func SaveToDB(job PaymentJob, processor string) {
 		"serverType":  processor,
 		"requestedAt": job.RequestedAt,
 	}
-	body, _ := json.Marshal(payload)
 
-	http.Post("http://database:8888/payments", "application/json", bytes.NewBuffer(body))
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[DB] Error marshaling payload: %v", err)
+		return
+	}
+
+	req, err := http.NewRequest("POST", "http://database:8888/payments", bytes.NewBuffer(body))
+	if err != nil {
+		log.Printf("[DB] Error creating request: %v", err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := fastClient.Do(req)
+	if err != nil {
+		log.Printf("[DB] Error sending request: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		log.Printf("[DB] Unexpected status: %d", resp.StatusCode)
+	}
 }
 
 func StartRetryWorker(defaultChecker, fallbackChecker *health.HealthManager) {
