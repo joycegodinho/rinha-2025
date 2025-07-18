@@ -39,6 +39,8 @@ func main() {
 
 	go handler.StartRetryWorker(defaultChecker, fallbackChecker)
 
+	go handler.StartDBWorker()
+
 	summaryProxy := newReversedProxy("http://database:8888/payments-summary")
 	purgePaymentsProxy := newReversedProxy("http://database:8888/purge-payments")
 
@@ -65,7 +67,7 @@ func main() {
 	if err := http.ListenAndServe(":"+port, router); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
-	log.Println("Payments Service stopped")
+	log.Println("Payments Service stopped.")
 	log.Println("Exiting...")
 	log.Println("Goodbye!")
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 
 	// "log"
 	"net/http"
@@ -23,6 +24,14 @@ var (
 	retryQueue []PaymentJob
 	retryMu    sync.Mutex
 )
+
+type DBRecord struct {
+	Amount      float64
+	Processor   string
+	RequestedAt time.Time
+}
+
+var dbQueue = make(chan DBRecord, 1000)
 
 const MaxAttempts = 3
 
@@ -126,14 +135,11 @@ func ProcessPayment(job PaymentJob, defaultChecker, fallbackChecker *health.Heal
 }
 
 func SaveToDB(job PaymentJob, processor string) {
-	payload := map[string]any{
-		"amount":      job.Amount,
-		"serverType":  processor,
-		"requestedAt": job.RequestedAt,
+	dbQueue <- DBRecord{
+		Amount:      job.Amount,
+		Processor:   processor,
+		RequestedAt: job.RequestedAt,
 	}
-	body, _ := json.Marshal(payload)
-
-	http.Post("http://database:8888/payments", "application/json", bytes.NewBuffer(body))
 }
 
 func StartRetryWorker(defaultChecker, fallbackChecker *health.HealthManager) {
@@ -162,6 +168,26 @@ func StartRetryWorker(defaultChecker, fallbackChecker *health.HealthManager) {
 				// 	// AddToRetryQueue(job)
 				// }
 
+			}
+		}(i)
+	}
+}
+
+func StartDBWorker() {
+	const workerCount = 10 // tune this if needed
+	for i := 0; i < workerCount; i++ {
+		go func(id int) {
+			for record := range dbQueue {
+				body, _ := json.Marshal(map[string]any{
+					"amount":      record.Amount,
+					"serverType":  record.Processor,
+					"requestedAt": record.RequestedAt,
+				})
+				_, err := http.Post("http://database:8888/payments", "application/json", bytes.NewBuffer(body))
+				if err != nil {
+					log.Printf("[DBWorker-%d] Error saving to DB: %v", id, err)
+					// Optionally requeue or log
+				}
 			}
 		}(i)
 	}
