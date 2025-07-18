@@ -5,13 +5,12 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
-	"sync"
+	"sync/atomic"
 )
 
 type LoadBalancer struct {
 	proxies         []Server
-	roundRobinCount int
-	sync.Mutex
+	roundRobinCount uint64
 }
 
 type Server struct {
@@ -24,34 +23,28 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (lb *LoadBalancer) nextIndex() int {
-	proxLen := len(lb.proxies)
+	return int(atomic.AddUint64(&lb.roundRobinCount, 1) % uint64(len(lb.proxies)))
+}
 
-	lb.Lock()
-	defer lb.Unlock()
-
-	proxInd := lb.roundRobinCount % proxLen
-	lb.roundRobinCount++
-	return proxInd
+func newReverseProxy(target string) *httputil.ReverseProxy {
+	proxy := &httputil.ReverseProxy{
+		Director: func(r *http.Request) {
+			r.URL.Scheme = "http"
+			r.URL.Host = target
+		},
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 100,
+			MaxConnsPerHost:     100,
+		},
+	}
+	return proxy
 }
 
 func main() {
 	servers := []Server{
-		{
-			proxy: &httputil.ReverseProxy{
-				Director: func(r *http.Request) {
-					r.URL.Scheme = "http"
-					r.URL.Host = os.Getenv("FIRST_SERVER_HOST") + ":" + os.Getenv("FIRST_SERVER_PORT")
-				},
-			},
-		},
-		{
-			proxy: &httputil.ReverseProxy{
-				Director: func(r *http.Request) {
-					r.URL.Scheme = "http"
-					r.URL.Host = os.Getenv("SECOND_SERVER_HOST") + ":" + os.Getenv("SECOND_SERVER_PORT")
-				},
-			},
-		},
+		{proxy: newReverseProxy(os.Getenv("FIRST_SERVER_HOST") + ":" + os.Getenv("FIRST_SERVER_PORT"))},
+		{proxy: newReverseProxy(os.Getenv("SECOND_SERVER_HOST") + ":" + os.Getenv("SECOND_SERVER_PORT"))},
 	}
 	lb := &LoadBalancer{
 		proxies:         servers,
