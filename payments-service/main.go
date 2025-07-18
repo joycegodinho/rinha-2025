@@ -84,8 +84,13 @@ func newReversedProxy(target string) *httputil.ReverseProxy {
 			r.URL.Host = targetURL.Host
 			r.Host = targetURL.Host
 
-			r.Header.Set("X-Forwarded-Host", r.Host)
-			r.Header.Set("X-API-Gateway", "go-proxy/1.0")
+			//r.Header.Set("X-Forwarded-Host", r.Host)
+			//r.Header.Set("X-API-Gateway", "go-proxy/1.0")
+		},
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 100,
+			MaxConnsPerHost:     100,
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("Summary proxy error: %v", err)
