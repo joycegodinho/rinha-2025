@@ -1,15 +1,15 @@
 package main
 
 import (
-	"context"
 	"database/db"
 	"database/handler"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
+
+	"github.com/valyala/fasthttp"
+	"github.com/valyala/fasthttp/fasthttpadaptor"
 )
 
 func main() {
@@ -26,19 +26,29 @@ func main() {
 		log.Printf("Failed to load initial records: %v", err)
 	}
 
-	http.HandleFunc("/payments", handler.PaymentHandler(database, fileDB))
-	http.HandleFunc("/payments-summary", handler.SummaryHandler(database))
-	http.HandleFunc("/purge-payments", handler.PurgePaymentsHandler(fileDB))
+	requestHandler := func(ctx *fasthttp.RequestCtx) {
+		switch string(ctx.Path()) {
+		case "/payments":
+			fasthttpadaptor.NewFastHTTPHandlerFunc(handler.PaymentHandler(database, fileDB))(ctx)
+		case "/payments-summary":
+			fasthttpadaptor.NewFastHTTPHandlerFunc(handler.SummaryHandler(database))(ctx)
+		case "/purge-payments":
+			fasthttpadaptor.NewFastHTTPHandlerFunc(handler.PurgePaymentsHandler(fileDB))(ctx)
+		default:
+			ctx.Error("Unsupported path", fasthttp.StatusNotFound)
+		}
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8888"
 	}
 
-	server := &http.Server{Addr: ":" + port}
+	server := &fasthttp.Server{Handler: requestHandler}
+
 	go func() {
 		log.Printf("Database server starting on port %s", port)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.ListenAndServe(":" + port); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
 	}()
@@ -48,11 +58,9 @@ func main() {
 	<-quit
 	log.Println("Shutting down Server...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(); err != nil {
 		log.Fatalf("Server shutdown error: %v", err)
 	}
+
 	log.Println("Server stopped.")
 }
