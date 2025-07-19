@@ -1,16 +1,13 @@
 package handler
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"log"
-
-	// "log"
-	"net/http"
 	"payments-service/health"
 	"sync"
 	"time"
+
+	"github.com/valyala/fasthttp"
 )
 
 type PaymentJob struct {
@@ -20,16 +17,13 @@ type PaymentJob struct {
 	Attempt       int
 }
 
-var fastClient = &http.Client{
-	Timeout: 700 * time.Millisecond, // faster failover
-	Transport: &http.Transport{
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   100,
-		MaxConnsPerHost:       100,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   300 * time.Millisecond,
-		ExpectContinueTimeout: 0,
-	},
+var fastClient = &fasthttp.Client{
+	MaxIdleConnDuration: 30 * time.Second,
+	MaxConnsPerHost:     200,
+	ReadTimeout:         700 * time.Millisecond,
+	WriteTimeout:        700 * time.Millisecond,
+	//MaxConnWaitTimeout:        500 * time.Millisecond,
+	//MaxIdemponentCallAttempts: 0,
 }
 
 var (
@@ -43,17 +37,16 @@ func AddToRetryQueue(job PaymentJob) {
 	retryMu.Lock()
 	defer retryMu.Unlock()
 	retryQueue = append(retryQueue, job)
-	// log.Printf("[RetryQueue] Added job %s (attempt %d). Queue length: %d", job.CorrelationID, job.Attempt, len(retryQueue))
 }
 
-func PaymentHandler(defaultChecker, fallbackChecker *health.HealthManager) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func PaymentHandler(defaultChecker, fallbackChecker *health.HealthManager) fasthttp.RequestHandler {
+	return func(ctx *fasthttp.RequestCtx) {
 		var req struct {
 			CorrelationID string  `json:"correlationId"`
 			Amount        float64 `json:"amount"`
 		}
 
-		json.NewDecoder(r.Body).Decode(&req)
+		json.Unmarshal(ctx.PostBody(), &req)
 
 		job := PaymentJob{
 			CorrelationID: req.CorrelationID,
@@ -64,7 +57,7 @@ func PaymentHandler(defaultChecker, fallbackChecker *health.HealthManager) http.
 
 		go ProcessPayment(job, defaultChecker, fallbackChecker)
 
-		w.WriteHeader(http.StatusAccepted)
+		ctx.SetStatusCode(fasthttp.StatusAccepted)
 	}
 }
 
@@ -116,16 +109,18 @@ func ProcessPayment(job PaymentJob, defaultChecker, fallbackChecker *health.Heal
 
 	body, _ := json.Marshal(payload)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+	req.SetRequestURI(endpoint)
+	req.Header.SetMethod("POST")
+	req.Header.SetContentType("application/json")
+	req.SetBody(body)
 
-	req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(resp)
 
-	resp, err := fastClient.Do(req)
-	if err != nil || resp.StatusCode >= 500 {
+	if err := fastClient.Do(req, resp); err != nil || resp.StatusCode() >= 500 {
 		markProcessorAsFailing(processor, defaultChecker, fallbackChecker)
-		// Retry
 		job.Attempt++
 		if job.Attempt < 5 {
 			AddToRetryQueue(job)
@@ -151,33 +146,32 @@ func SaveToDB(job PaymentJob, processor string) {
 		return
 	}
 
-	req, err := http.NewRequest("POST", "http://database:8888/payments", bytes.NewBuffer(body))
-	if err != nil {
-		log.Printf("[DB] Error creating request: %v", err)
-		return
-	}
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+	req.SetRequestURI("http://database:8888/payments")
+	req.Header.SetMethod("POST")
+	req.Header.SetContentType("application/json")
+	req.SetBody(body)
 
-	req.Header.Set("Content-Type", "application/json")
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(resp)
 
-	resp, err := fastClient.Do(req)
-	if err != nil {
+	if err := fastClient.Do(req, resp); err != nil {
 		log.Printf("[DB] Error sending request: %v", err)
 		return
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode >= 300 {
-		log.Printf("[DB] Unexpected status: %d", resp.StatusCode)
+	if resp.StatusCode() >= 300 {
+		log.Printf("[DB] Unexpected status: %d", resp.StatusCode())
 	}
 }
 
 func StartRetryWorker(defaultChecker, fallbackChecker *health.HealthManager) {
-	const workerCount = 20 // You can tune this depending on CPU/mem usage
+	const workerCount = 20
 
 	for i := 0; i < workerCount; i++ {
 		go func(workerID int) {
 			for {
-				// log.Printf("[RetryWorker] Running")
 				retryMu.Lock()
 				if len(retryQueue) == 0 {
 					retryMu.Unlock()
@@ -189,14 +183,7 @@ func StartRetryWorker(defaultChecker, fallbackChecker *health.HealthManager) {
 				retryQueue = retryQueue[1:]
 				retryMu.Unlock()
 
-				// log.Printf("[RetryWorker-%d] Retrying job %s (attempt %d)", workerID, job.CorrelationID, job.Attempt)
 				ProcessPayment(job, defaultChecker, fallbackChecker)
-				// success := ProcessPayment(job, defaultChecker, fallbackChecker)
-				// if !success && job.Attempt < MaxAttempts {
-				// 	// job.Attempt++
-				// 	// AddToRetryQueue(job)
-				// }
-
 			}
 		}(i)
 	}
