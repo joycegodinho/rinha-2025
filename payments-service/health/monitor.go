@@ -3,12 +3,10 @@ package health
 import (
 	"context"
 	"encoding/json"
-
-	// "log"
-	"net/http"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/valyala/fasthttp"
 )
 
 type ProcessorHealth struct {
@@ -34,18 +32,13 @@ func (h *HealthManager) CheckAndUpdateHealth() {
 }
 
 func (h *HealthManager) updateHealth() {
-	// Try to acquire the lock with a short TTL
 	ok, err := h.Redis.SetNX(h.Ctx, "lock:health:"+h.Processor, "1", 2*time.Second).Result()
 	if err != nil || !ok {
-		return // another instance is doing it
+		return
 	}
 
-	client := &http.Client{Timeout: 2 * time.Second}
-	req, _ := http.NewRequest("GET", h.Endpoint, nil)
-
-	resp, err := client.Do(req)
-
-	if err != nil || resp.StatusCode != 200 {
+	statusCode, body, err := fasthttp.GetTimeout(nil, h.Endpoint, 2*time.Second)
+	if err != nil || statusCode != fasthttp.StatusOK {
 		h.SaveHealthToRedis(true, 9999)
 		return
 	}
@@ -55,11 +48,10 @@ func (h *HealthManager) updateHealth() {
 		MinResponseTime int  `json:"minResponseTime"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+	if err := json.Unmarshal(body, &res); err != nil {
 		h.SaveHealthToRedis(true, 9999)
 		return
 	}
-
 	h.SaveHealthToRedis(res.Failing, res.MinResponseTime)
 }
 
