@@ -31,7 +31,7 @@ var (
 	retryMu    sync.Mutex
 )
 
-const MaxAttempts = 3
+const MaxAttempts = 5
 
 func AddToRetryQueue(job PaymentJob) {
 	retryMu.Lock()
@@ -122,7 +122,7 @@ func ProcessPayment(job PaymentJob, defaultChecker, fallbackChecker *health.Heal
 	if err := fastClient.Do(req, resp); err != nil || resp.StatusCode() >= 500 {
 		markProcessorAsFailing(processor, defaultChecker, fallbackChecker)
 		job.Attempt++
-		if job.Attempt < 5 {
+		if job.Attempt < MaxAttempts {
 			AddToRetryQueue(job)
 		}
 		return false
@@ -167,7 +167,7 @@ func SaveToDB(job PaymentJob, processor string) {
 }
 
 func StartRetryWorker(defaultChecker, fallbackChecker *health.HealthManager) {
-	const workerCount = 20
+	const workerCount = 30
 
 	for i := 0; i < workerCount; i++ {
 		go func(workerID int) {
