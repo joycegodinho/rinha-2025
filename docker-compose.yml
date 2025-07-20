@@ -11,14 +11,19 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     networks:
       - backend
+    deploy:
+      resources:
+        limits:
+          cpus: '0.35'
+          memory: '50M'
 
   payments-service: &payments-service
-    build:
-      context: .
-      target: dev
-      dockerfile: payments-service/Dockerfile
+    image: joycegodinhoo/payments-service:latest
     ports:
       - "8086:8086"
     environment:
@@ -34,14 +39,16 @@ services:
     networks:
       - backend
       - payment-processor
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: '85M'
 
 
   payments-service-2:
     <<: *payments-service
-    build:
-      context: .
-      target: dev
-      dockerfile: payments-service/Dockerfile.service2
+    image: joycegodinhoo/payments-service:latest
     environment:
       <<: *base-env
       SERVICE_NUMBER: 2
@@ -57,12 +64,14 @@ services:
     networks:
       - backend
       - payment-processor
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: '85M'
 
   load-balancer-backend:
-    build:
-      context: .
-      target: dev
-      dockerfile: load-balancer-backend/Dockerfile
+    image: joycegodinhoo/load-balancer-backend:latest
     ports:
       - "9999:9999"
     environment:
@@ -78,12 +87,14 @@ services:
       - payments-service-2
     networks:
       - backend
+    deploy:
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: '50M'
 
   database:
-    build:
-      context: .
-      target: dev
-      dockerfile: database/Dockerfile
+    image: joycegodinhoo/database:latest
     ports:
       - "8888:8888"
     environment:
@@ -92,7 +103,11 @@ services:
       - ./:/db/
     networks:
       - backend
-
+    deploy:
+      resources:
+        limits:
+          cpus: '0.05'
+          memory: '80M'
 
 networks:
   backend:
