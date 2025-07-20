@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	fileDB := db.NewFileDB("payments.json1")
+	fileDB := db.NewFileDB("./payments.json1")
 	defer fileDB.Close()
 
 	database := db.NewDB()
@@ -62,5 +62,5 @@ func main() {
 		log.Fatalf("Server shutdown error: %v", err)
 	}
 
-	log.Println("Server stopped.")
+	log.Println("Server stopped...")
 }
