@@ -1,22 +1,22 @@
 FROM golang:1.24-alpine AS base
-EXPOSE 8085
 WORKDIR /pps2
+EXPOSE 8086
+FROM base AS builder
+COPY . .
+COPY go.mod go.sum ./
+RUN go mod download
+# The output will be a static binary named 'main' in the /pps directory.
+RUN CGO_ENABLED=0 GOOS=linux go build -o /pps2/main ./main.go
 
 FROM base AS dev
 COPY payments-service/ .
-# RUN go mod download
-
 RUN go install github.com/air-verse/air@latest
 COPY payments-service/ .
-
+# The volume mounts the project root to /pps.
+# So the .air.toml file is at /pps/payments-service/.air.toml
 ENTRYPOINT ["air", "-c", "payments-service/.air.toml"]
-# ENTRYPOINT ["air", "-c", "/pps2/.air.toml"]
 
-FROM base AS prod
-COPY . .
-COPY go.mod .
-
-# RUN go mod download
-RUN CGO_ENABLED=0 GOOS=linux go build -o /main .
-
+FROM alpine:latest AS prod
+# Copy the compiled binary from the builder stage.
+COPY --from=builder /pps2/main .
 CMD ["/main"]
