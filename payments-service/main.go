@@ -63,7 +63,6 @@ func main() {
 	}
 	log.Println("Payments Service stopped")
 	log.Println("Exiting...")
-	log.Println("Goodbye!")
 }
 
 func handleProxy(ctx *fasthttp.RequestCtx, client *fasthttp.Client, host string) {
@@ -74,4 +73,3 @@ func handleProxy(ctx *fasthttp.RequestCtx, client *fasthttp.Client, host string)
 		ctx.Error(err.Error(), fasthttp.StatusBadGateway)
 	}
 }
-
