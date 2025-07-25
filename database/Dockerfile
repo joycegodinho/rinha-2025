@@ -16,5 +16,5 @@ COPY database/ .
 ENTRYPOINT ["air", "-c", "database/.air.toml"]
 
 FROM builder AS prod
-COPY --from=builder /main .
+# COPY --from=builder /main .
 CMD ["/main"]

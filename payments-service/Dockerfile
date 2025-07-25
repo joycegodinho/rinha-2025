@@ -6,7 +6,7 @@ COPY . .
 COPY go.mod go.sum ./
 RUN go mod download
 # The output will be a static binary named 'main' in the /pps directory.
-RUN CGO_ENABLED=0 GOOS=linux go build -o /pps/main ./main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /main ./main.go
 
 FROM base AS dev
 COPY payments-service/go.mod payments-service/go.sum ./
@@ -18,7 +18,7 @@ COPY payments-service/ .
 # So the .air.toml file is at /pps/payments-service/.air.toml
 ENTRYPOINT ["air", "-c", "payments-service/.air.toml"]
 
-FROM alpine:latest AS prod
+FROM builder AS prod
 # Copy the compiled binary from the builder stage.
-COPY --from=builder /pps/main .
+# COPY --from=builder /pps/main .
 CMD ["/main"]
