@@ -9,7 +9,9 @@ RUN go mod download
 RUN CGO_ENABLED=0 GOOS=linux go build -o /pps/main ./main.go
 
 FROM base AS dev
-COPY payments-service/ .
+COPY payments-service/go.mod payments-service/go.sum ./
+# COPY payments-service/ .
+RUN go mod download
 RUN go install github.com/air-verse/air@latest
 COPY payments-service/ .
 # The volume mounts the project root to /pps.
