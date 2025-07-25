@@ -19,7 +19,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.35'
+          cpus: '0.006'
           memory: '50M'
 
   payments-service: &payments-service
@@ -42,7 +42,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.50'
+          cpus: '0.742'
           memory: '85M'
 
 
@@ -67,7 +67,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.50'
+          cpus: '0.742'
           memory: '85M'
 
   load-balancer-backend:
@@ -90,7 +90,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.10'
+          cpus: '0.005'
           memory: '50M'
 
   database:
@@ -106,7 +106,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.05'
+          cpus: '0.005'
           memory: '80M'
 
 networks:
