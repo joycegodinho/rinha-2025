@@ -174,7 +174,7 @@ func StartRetryWorker(defaultChecker, fallbackChecker *health.HealthManager) {
 				retryMu.Lock()
 				if len(retryQueue) == 0 {
 					retryMu.Unlock()
-					// time.Sleep(5 * time.Millisecond)
+					time.Sleep(1 * time.Millisecond)
 					continue
 				}
 
