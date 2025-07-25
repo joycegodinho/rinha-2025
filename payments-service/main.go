@@ -7,6 +7,7 @@ import (
 	"payments-service/handler"
 	"payments-service/health"
 	"strings"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/valyala/fasthttp"
@@ -37,7 +38,13 @@ func main() {
 
 	go handler.StartRetryWorker(defaultChecker, fallbackChecker)
 
-	client := &fasthttp.Client{}
+	client := &fasthttp.Client{
+		MaxConnsPerHost: 256,
+		ReadTimeout:     700 * time.Millisecond,
+		WriteTimeout:    700 * time.Millisecond,
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
 
 	requestHandler := func(ctx *fasthttp.RequestCtx) {
 		path := string(ctx.Path())

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"github.com/valyala/fasthttp"
 )
@@ -39,7 +40,13 @@ func main() {
 	lb := &LoadBalancer{
 		servers:         servers,
 		roundRobinCount: 0,
-		client:          &fasthttp.Client{},
+		client: &fasthttp.Client{
+			MaxConnsPerHost: 256,
+			ReadTimeout:     700 * time.Millisecond,
+			WriteTimeout:    700 * time.Millisecond,
+			ReadBufferSize:  1024,
+			WriteBufferSize: 1024,
+		},
 	}
 
 	port := os.Getenv("PORT")

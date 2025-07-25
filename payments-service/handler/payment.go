@@ -18,12 +18,11 @@ type PaymentJob struct {
 }
 
 var fastClient = &fasthttp.Client{
-	MaxIdleConnDuration: 30 * time.Second,
-	MaxConnsPerHost:     200,
-	ReadTimeout:         700 * time.Millisecond,
-	WriteTimeout:        700 * time.Millisecond,
-	//MaxConnWaitTimeout:        500 * time.Millisecond,
-	//MaxIdemponentCallAttempts: 0,
+	MaxConnsPerHost: 256,
+	ReadTimeout:     700 * time.Millisecond,
+	WriteTimeout:    700 * time.Millisecond,
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
 }
 
 var (
