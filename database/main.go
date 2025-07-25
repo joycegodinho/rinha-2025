@@ -33,7 +33,7 @@ func main() {
 		case "/payments-summary":
 			fasthttpadaptor.NewFastHTTPHandlerFunc(handler.SummaryHandler(database))(ctx)
 		case "/purge-payments":
-			fasthttpadaptor.NewFastHTTPHandlerFunc(handler.PurgePaymentsHandler(fileDB))(ctx)
+			fasthttpadaptor.NewFastHTTPHandlerFunc(handler.PurgePaymentsHandler(database, fileDB))(ctx)
 		default:
 			ctx.Error("Unsupported path", fasthttp.StatusNotFound)
 		}

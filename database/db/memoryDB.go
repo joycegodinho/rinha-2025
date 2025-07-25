@@ -146,3 +146,10 @@ func (db *PaymentDB) QuerySummary(from, to time.Time) map[string]*api.Summary {
 
 	return result
 }
+
+func (db *PaymentDB) Clean() {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.buckets = make(map[int64]*MillisecondBucket)
+	db.timeIndex = make([]*MillisecondBucket, 0)
+}
