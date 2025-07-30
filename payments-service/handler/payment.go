@@ -61,6 +61,9 @@ func PaymentHandler(defaultChecker, fallbackChecker *health.HealthManager) fasth
 }
 
 func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
+	if defaultHealth == nil && fallbackHealth == nil {
+		return ""
+	}
 	if defaultHealth.Failing && fallbackHealth.Failing {
 		return ""
 	}
@@ -117,8 +120,9 @@ func ProcessPayment(job PaymentJob, defaultChecker, fallbackChecker *health.Heal
 
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
+	err := fastClient.Do(req, resp)
 
-	if err := fastClient.Do(req, resp); err != nil || resp.StatusCode() >= 500 {
+	if err != nil || resp.StatusCode() >= 500 {
 		markProcessorAsFailing(processor, defaultChecker, fallbackChecker)
 		job.Attempt++
 		if job.Attempt < MaxAttempts {
