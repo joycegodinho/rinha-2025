@@ -37,21 +37,40 @@ func (h *HealthManager) updateHealth() {
 		return
 	}
 
-	statusCode, body, err := fasthttp.GetTimeout(nil, h.Endpoint, 2*time.Second)
-	if err != nil || statusCode != fasthttp.StatusOK {
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+
+	req.SetRequestURI(h.Endpoint)
+	req.Header.SetMethod(fasthttp.MethodGet)
+
+	client := &fasthttp.Client{
+		MaxConnsPerHost:               10,
+		ReadTimeout:                   2 * time.Second,
+		WriteTimeout:                  2 * time.Second,
+		MaxIdleConnDuration:           10 * time.Second,
+		NoDefaultUserAgentHeader:      true,
+		DisableHeaderNamesNormalizing: true,
+	}
+
+	err = client.Do(req, resp)
+	if err != nil || resp.StatusCode() != fasthttp.StatusOK {
 		h.SaveHealthToRedis(true, 9999)
 		return
 	}
+
+	body := resp.Body()
 
 	var res struct {
 		Failing         bool `json:"failing"`
 		MinResponseTime int  `json:"minResponseTime"`
 	}
-
 	if err := json.Unmarshal(body, &res); err != nil {
 		h.SaveHealthToRedis(true, 9999)
 		return
 	}
+
 	h.SaveHealthToRedis(res.Failing, res.MinResponseTime)
 }
 
@@ -62,7 +81,7 @@ func (h *HealthManager) SaveHealthToRedis(failing bool, minResp int) {
 		LastChecked:     time.Now().UTC(),
 	}
 	data, _ := json.Marshal(health)
-	h.Redis.Set(h.Ctx, "health:"+h.Processor, data, 6*time.Second)
+	h.Redis.Set(h.Ctx, "health:"+h.Processor, data, 10*time.Second)
 }
 
 func (h *HealthManager) GetHealth() (*ProcessorHealth, error) {
