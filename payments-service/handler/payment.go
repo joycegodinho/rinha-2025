@@ -60,6 +60,28 @@ func PaymentHandler(defaultChecker, fallbackChecker *health.HealthManager) fasth
 	}
 }
 
+// Select processor by time
+// func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
+// 	if defaultHealth == nil && fallbackHealth == nil {
+// 		return ""
+// 	}
+// 	if defaultHealth.Failing && fallbackHealth.Failing {
+// 		return ""
+// 	}
+// 	if !defaultHealth.Failing && fallbackHealth.Failing {
+// 		return "default"
+// 	}
+// 	if defaultHealth.Failing && !fallbackHealth.Failing {
+// 		return "fallback"
+// 	}
+
+// 	if defaultHealth.MinResponseTime <= fallbackHealth.MinResponseTime {
+// 		return "default"
+// 	}
+// 	return "fallback"
+// }
+
+// Select default if on
 func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
 	if defaultHealth == nil && fallbackHealth == nil {
 		return ""
@@ -67,18 +89,32 @@ func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) stri
 	if defaultHealth.Failing && fallbackHealth.Failing {
 		return ""
 	}
-	if !defaultHealth.Failing && fallbackHealth.Failing {
-		return "default"
-	}
-	if defaultHealth.Failing && !fallbackHealth.Failing {
-		return "fallback"
-	}
-
-	if defaultHealth.MinResponseTime <= fallbackHealth.MinResponseTime {
+	if !defaultHealth.Failing {
 		return "default"
 	}
 	return "fallback"
 }
+
+// Select processor by score
+// func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
+// 	if defaultHealth == nil && fallbackHealth == nil {
+// 		return ""
+// 	}
+// 	if defaultHealth.Failing && fallbackHealth.Failing {
+// 		return ""
+// 	}
+// 	if !defaultHealth.Failing && fallbackHealth.Failing {
+// 		return "default"
+// 	}
+// 	if defaultHealth.Failing && !fallbackHealth.Failing {
+// 		return "fallback"
+// 	}
+
+// 	if 3*fallbackHealth.MinResponseTime < defaultHealth.MinResponseTime {
+// 		return "fallback"
+// 	}
+// 	return "default"
+// }
 
 func markProcessorAsFailing(proc string, d *health.HealthManager, f *health.HealthManager) {
 	if proc == "default" {
