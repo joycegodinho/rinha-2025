@@ -20,10 +20,11 @@ services:
       resources:
         limits:
           cpus: '0.006'
-          memory: '50M'
+          memory: '30MB'
 
   payments-service: &payments-service
     image: joycegodinhoo/payments-service:latest
+    container_name: payments-service
     ports:
       - "8086:8086"
     environment:
@@ -43,12 +44,12 @@ services:
       resources:
         limits:
           cpus: '0.742'
-          memory: '85M'
-
+          memory: '70MB'
 
   payments-service-2:
     <<: *payments-service
     image: joycegodinhoo/payments-service:latest
+    container_name: payments-service-2
     environment:
       <<: *base-env
       SERVICE_NUMBER: 2
@@ -68,7 +69,7 @@ services:
       resources:
         limits:
           cpus: '0.742'
-          memory: '85M'
+          memory: '70MB'
 
   load-balancer-backend:
     image: joycegodinhoo/load-balancer-backend:latest
@@ -91,7 +92,7 @@ services:
       resources:
         limits:
           cpus: '0.005'
-          memory: '50M'
+          memory: '80MB'
 
   database:
     image: joycegodinhoo/database:latest
@@ -107,7 +108,7 @@ services:
       resources:
         limits:
           cpus: '0.005'
-          memory: '80M'
+          memory: '100MB'
 
 networks:
   backend:
