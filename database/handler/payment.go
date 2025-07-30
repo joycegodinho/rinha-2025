@@ -4,8 +4,6 @@ import (
 	"database/api"
 	"database/db"
 	"encoding/json"
-
-	// "log"
 	"math"
 	"net/http"
 	"time"
@@ -13,7 +11,6 @@ import (
 
 func PaymentHandler(memoryDB *db.PaymentDB, fileDB *db.FileDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-
 		var request api.PaymentRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
