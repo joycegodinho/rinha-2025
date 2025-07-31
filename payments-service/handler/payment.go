@@ -161,12 +161,12 @@ func ProcessPayment(job PaymentJob, defaultChecker, fallbackChecker *health.Heal
 	req.SetRequestURI(endpoint)
 	req.Header.SetMethod("POST")
 	req.Header.SetContentType("application/json")
-	req.SetBody(body)
+	req.SetBodyRaw(body)
 
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
-	err := fastClient.Do(req, resp)
-
+	// err := fastClient.Do(req, resp)
+	err := fastClient.DoTimeout(req, resp, 6*time.Second)
 	if err != nil || resp.StatusCode() >= 500 {
 		markProcessorAsFailing(processor, defaultChecker, fallbackChecker)
 		job.Attempt++
@@ -199,7 +199,7 @@ func SaveToDB(job PaymentJob, processor string) {
 	req.SetRequestURI("http://database:8888/payments")
 	req.Header.SetMethod("POST")
 	req.Header.SetContentType("application/json")
-	req.SetBody(body)
+	req.SetBodyRaw(body)
 
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
