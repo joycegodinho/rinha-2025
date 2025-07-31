@@ -52,6 +52,11 @@ func (h *HealthManager) updateHealth() {
 		MaxIdleConnDuration:           10 * time.Second,
 		NoDefaultUserAgentHeader:      true,
 		DisableHeaderNamesNormalizing: true,
+		DisablePathNormalizing:        true,
+		Dial: (&fasthttp.TCPDialer{
+			Concurrency:      4096,
+			DNSCacheDuration: time.Hour,
+		}).Dial,
 	}
 
 	err = client.Do(req, resp)

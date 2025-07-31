@@ -18,11 +18,18 @@ type PaymentJob struct {
 }
 
 var fastClient = &fasthttp.Client{
-	MaxConnsPerHost: 256,
-	ReadTimeout:     700 * time.Millisecond,
-	WriteTimeout:    700 * time.Millisecond,
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	MaxConnsPerHost:               256,
+	ReadTimeout:                   700 * time.Millisecond,
+	WriteTimeout:                  700 * time.Millisecond,
+	ReadBufferSize:                1024,
+	WriteBufferSize:               1024,
+	NoDefaultUserAgentHeader:      true,
+	DisableHeaderNamesNormalizing: true,
+	DisablePathNormalizing:        true,
+	Dial: (&fasthttp.TCPDialer{
+		Concurrency:      4096,
+		DNSCacheDuration: time.Hour,
+	}).Dial,
 }
 
 var (
