@@ -4,22 +4,21 @@ import (
 	"database/db"
 	"encoding/json"
 	"fmt"
-
-	// "log"
-	"net/http"
 	"time"
+
+	"github.com/valyala/fasthttp"
 )
 
-func SummaryHandler(d *db.PaymentDB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func SummaryHandler(d *db.PaymentDB) fasthttp.RequestHandler {
+	return func(ctx *fasthttp.RequestCtx) {
 
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		if !ctx.IsGet() {
+			ctx.Error("Method not allowed", fasthttp.StatusMethodNotAllowed)
 			return
 		}
 
-		from := r.URL.Query().Get("from")
-		to := r.URL.Query().Get("to")
+		from := string(ctx.QueryArgs().Peek("from"))
+		to := string(ctx.QueryArgs().Peek("to"))
 
 		var (
 			fromTime time.Time
@@ -30,7 +29,7 @@ func SummaryHandler(d *db.PaymentDB) http.HandlerFunc {
 		if from != "" {
 			fromTime, err = parseTime(from)
 			if err != nil {
-				http.Error(w, "Invalid 'from' parameter", http.StatusBadRequest)
+				ctx.Error("Invalid 'from' parameter", fasthttp.StatusBadRequest)
 				return
 			}
 		} else {
@@ -40,7 +39,7 @@ func SummaryHandler(d *db.PaymentDB) http.HandlerFunc {
 		if to != "" {
 			toTime, err = parseTime(to)
 			if err != nil {
-				http.Error(w, "Invalid 'to' parameter", http.StatusBadRequest)
+				ctx.Error("Invalid 'to' parameter", fasthttp.StatusBadRequest)
 				return
 			}
 		} else {
@@ -48,15 +47,15 @@ func SummaryHandler(d *db.PaymentDB) http.HandlerFunc {
 		}
 
 		if fromTime.After(toTime) {
-			http.Error(w, "'from' time cannot be after 'to' time", http.StatusBadRequest)
+			ctx.Error("'from' time cannot be after 'to' time", fasthttp.StatusBadRequest)
 			return
 		}
 
 		summary := d.QuerySummary(fromTime, toTime)
 
 		// Return response
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(summary)
+		ctx.SetContentType("application/json")
+		json.NewEncoder(ctx).Encode(summary)
 	}
 }
 

@@ -9,7 +9,6 @@ import (
 	"syscall"
 
 	"github.com/valyala/fasthttp"
-	"github.com/valyala/fasthttp/fasthttpadaptor"
 )
 
 func main() {
@@ -26,14 +25,18 @@ func main() {
 		log.Printf("Failed to load initial records: %v", err)
 	}
 
+	paymentHandler := handler.PaymentHandler(database, fileDB)
+	summaryHandler := handler.SummaryHandler(database)
+	purgePaymentsHandler := handler.PurgePaymentsHandler(database, fileDB)
+
 	requestHandler := func(ctx *fasthttp.RequestCtx) {
 		switch string(ctx.Path()) {
 		case "/payments":
-			fasthttpadaptor.NewFastHTTPHandlerFunc(handler.PaymentHandler(database, fileDB))(ctx)
+			paymentHandler(ctx)
 		case "/payments-summary":
-			fasthttpadaptor.NewFastHTTPHandlerFunc(handler.SummaryHandler(database))(ctx)
+			summaryHandler(ctx)
 		case "/purge-payments":
-			fasthttpadaptor.NewFastHTTPHandlerFunc(handler.PurgePaymentsHandler(database, fileDB))(ctx)
+			purgePaymentsHandler(ctx)
 		default:
 			ctx.Error("Unsupported path", fasthttp.StatusNotFound)
 		}
@@ -46,12 +49,10 @@ func main() {
 
 	server := &fasthttp.Server{Handler: requestHandler}
 
-	go func() {
-		log.Printf("Database server starting on port %s", port)
-		if err := server.ListenAndServe(":" + port); err != nil {
-			log.Fatalf("Server error: %v", err)
-		}
-	}()
+	log.Printf("Database server starting on port %s", port)
+	if err := server.ListenAndServe(":" + port); err != nil {
+		log.Fatalf("Server error: %v", err)
+	}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

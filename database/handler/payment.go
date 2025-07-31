@@ -5,26 +5,27 @@ import (
 	"database/db"
 	"encoding/json"
 	"math"
-	"net/http"
 	"time"
+
+	"github.com/valyala/fasthttp"
 )
 
-func PaymentHandler(memoryDB *db.PaymentDB, fileDB *db.FileDB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func PaymentHandler(memoryDB *db.PaymentDB, fileDB *db.FileDB) fasthttp.RequestHandler {
+	return func(ctx *fasthttp.RequestCtx) {
 		var request api.PaymentRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
+		if err := json.Unmarshal(ctx.PostBody(), &request); err != nil {
+			ctx.Error("Invalid request", fasthttp.StatusBadRequest)
 			return
 		}
 
 		requestedAt, err := time.Parse(time.RFC3339, request.RequestedAt)
 		if err != nil {
-			http.Error(w, "Invalid requestedAt format. Use RFC3339 format", http.StatusBadRequest)
+			ctx.Error("Invalid requestedAt format. Use RFC3339 format", fasthttp.StatusBadRequest)
 			return
 		}
 
 		if request.ServerType != "default" && request.ServerType != "fallback" {
-			http.Error(w, "Invalid server type. Must be 'default' or 'fallback'", http.StatusBadRequest)
+			ctx.Error("Invalid server type. Must be 'default' or 'fallback'", fasthttp.StatusBadRequest)
 			return
 		}
 
@@ -37,10 +38,6 @@ func PaymentHandler(memoryDB *db.PaymentDB, fileDB *db.FileDB) http.HandlerFunc 
 		memoryDB.AddRecord(record)
 		go fileDB.SaveRecord(record)
 
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{
-			"status": "record created",
-			"time":   requestedAt.Format(time.RFC3339),
-		})
+		ctx.SetStatusCode(fasthttp.StatusCreated)
 	}
 }
