@@ -42,15 +42,16 @@ func main() {
 		}
 	}
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8888"
+	socketPath := os.Getenv("SOCKET_PATH")
+	if socketPath == "" {
+		log.Fatal("SOCKET_PATH environment variable not set")
 	}
+	_ = os.Remove(socketPath)
 
 	server := &fasthttp.Server{Handler: requestHandler}
 
-	log.Printf("Database server starting on port %s", port)
-	if err := server.ListenAndServe(":" + port); err != nil {
+	log.Printf("Database server starting on socket %s", socketPath)
+	if err := server.ListenAndServeUNIX(socketPath, 0666); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 
