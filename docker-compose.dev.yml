@@ -1,8 +1,6 @@
 
 x-base-env: &base-env
-  DATABASE_SUCCESS_URL: http://database:8888/payments
-  DATABASE_SUMMARY_URL: http://database:8888/payments-summary
-  DATABASE_PURGE_URL: http://database:8888/purge-payments
+  DB_SOCKET_PATH: /sockets/database.sock
 
 services:
   redis:
@@ -19,14 +17,13 @@ services:
       context: .
       target: dev
       dockerfile: payments-service/Dockerfile
-    ports:
-      - "8086:8086"
     environment:
       <<: *base-env
       SERVICE_NUMBER: 1
-      PORT: 8086
+      SOCKET_PATH: /sockets/payments-service-1.sock
     volumes:
       - ./:/pps/
+      - sockets-volume:/sockets
     working_dir: /pps
     depends_on:
       - redis
@@ -45,11 +42,10 @@ services:
     environment:
       <<: *base-env
       SERVICE_NUMBER: 2
-      PORT: 8087
-    ports:
-      - "8087:8087"
+      SOCKET_PATH: /sockets/payments-service-2.sock
     volumes:
       - ./:/pps2/
+      - sockets-volume:/sockets
     working_dir: /pps2/
     depends_on:
       - redis
@@ -67,12 +63,11 @@ services:
       - "9999:9999"
     environment:
       - PORT=9999
-      - FIRST_SERVER_HOST=payments-service
-      - FIRST_SERVER_PORT=8086
-      - SECOND_SERVER_HOST=payments-service-2
-      - SECOND_SERVER_PORT=8087
+      - SOCKET1_PATH=/sockets/payments-service-1.sock
+      - SOCKET2_PATH=/sockets/payments-service-2.sock
     volumes:
       - ./:/lbb/
+      - sockets-volume:/sockets
     depends_on:
       - payments-service
       - payments-service-2
@@ -84,12 +79,11 @@ services:
       context: .
       target: dev
       dockerfile: database/Dockerfile
-    ports:
-      - "8888:8888"
     environment:
-      - PORT=8888
+      - SOCKET_PATH=/sockets/database.sock
     volumes:
       - ./:/db/
+      - sockets-volume:/sockets
     networks:
       - backend
 
@@ -99,3 +93,6 @@ networks:
     driver: bridge
   payment-processor:
     external: true
+
+volumes:
+  sockets-volume:
