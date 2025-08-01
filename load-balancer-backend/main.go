@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"net"
 	"os"
 	"sync/atomic"
 	"time"
@@ -10,54 +12,66 @@ import (
 )
 
 type LoadBalancer struct {
-	servers         []string
+	clients         []*fasthttp.HostClient
 	roundRobinCount uint64
-	client          *fasthttp.Client
 }
 
 func (lb *LoadBalancer) Handler(ctx *fasthttp.RequestCtx) {
 	next := lb.nextIndex()
+	client := lb.clients[next]
 
 	req := &ctx.Request
 	resp := &ctx.Response
 
-	req.SetHost(lb.servers[next])
+	// No need to set Host for Unix socket — but you can leave it empty for clarity
+	req.SetHost("")
 
-	if err := lb.client.Do(req, resp); err != nil {
+	if err := client.Do(req, resp); err != nil {
 		ctx.Error(err.Error(), fasthttp.StatusBadGateway)
 	}
 }
 
 func (lb *LoadBalancer) nextIndex() int {
-	return int(atomic.AddUint64(&lb.roundRobinCount, 1) % uint64(len(lb.servers)))
+	return int(atomic.AddUint64(&lb.roundRobinCount, 1) % uint64(len(lb.clients)))
 }
 
 func main() {
-	servers := []string{
-		os.Getenv("FIRST_SERVER_HOST") + ":" + os.Getenv("FIRST_SERVER_PORT"),
-		os.Getenv("SECOND_SERVER_HOST") + ":" + os.Getenv("SECOND_SERVER_PORT"),
+	// Paths to your Unix socket files (shared via Docker volume)
+	socketPaths := []string{
+		"/sockets/payments-service-1.sock",
+		"/sockets/payments-service-2.sock",
 	}
-	lb := &LoadBalancer{
-		servers:         servers,
-		roundRobinCount: 0,
-		client: &fasthttp.Client{
-			MaxConnsPerHost:               4096,
+
+	var clients []*fasthttp.HostClient
+	for _, socketPath := range socketPaths {
+		// One HostClient per Unix socket
+		client := &fasthttp.HostClient{
+			IsTLS: false,
+			Dial: func(addr string) (net.Conn, error) {
+				return net.Dial("unix", socketPath)
+			},
 			ReadTimeout:                   700 * time.Millisecond,
 			WriteTimeout:                  700 * time.Millisecond,
+			MaxConns:                      256,
 			ReadBufferSize:                1024,
 			WriteBufferSize:               1024,
 			NoDefaultUserAgentHeader:      true,
 			DisableHeaderNamesNormalizing: true,
 			DisablePathNormalizing:        true,
-			Dial: (&fasthttp.TCPDialer{
-				Concurrency:      4096,
-				DNSCacheDuration: time.Hour,
-			}).Dial,
-		},
+		}
+		clients = append(clients, client)
+	}
+
+	lb := &LoadBalancer{
+		clients:         clients,
+		roundRobinCount: 0,
 	}
 
 	port := os.Getenv("PORT")
-	fmt.Println("Starting GO LOAD BALANCER service on port: " + port)
+	if port == "" {
+		port = "9999"
+	}
 
-	fasthttp.ListenAndServe(":"+port, lb.Handler)
+	fmt.Println("Load balancer running on port:", port)
+	log.Fatal(fasthttp.ListenAndServe(":"+port, lb.Handler))
 }
