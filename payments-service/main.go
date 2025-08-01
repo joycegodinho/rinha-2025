@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"os"
 	"payments-service/handler"
 	"payments-service/health"
@@ -12,6 +13,8 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/valyala/fasthttp"
 )
+
+var fastClient *fasthttp.Client
 
 func main() {
 	rdb := redis.NewClient(&redis.Options{
@@ -38,19 +41,17 @@ func main() {
 
 	go handler.StartRetryWorker(defaultChecker, fallbackChecker)
 
-	client := &fasthttp.Client{
-		MaxConnsPerHost:               256,
-		ReadTimeout:                   700 * time.Millisecond,
-		WriteTimeout:                  700 * time.Millisecond,
-		ReadBufferSize:                1024,
-		WriteBufferSize:               1024,
-		NoDefaultUserAgentHeader:      true,
-		DisableHeaderNamesNormalizing: true,
-		DisablePathNormalizing:        true,
-		Dial: (&fasthttp.TCPDialer{
-			Concurrency:      4096,
-			DNSCacheDuration: time.Hour,
-		}).Dial,
+	dbSocket := os.Getenv("DB_SOCKET_PATH")
+	if dbSocket == "" {
+		log.Fatal("DB_SOCKET_PATH not set")
+	}
+
+	fastClient = &fasthttp.Client{
+		Dial: func(addr string) (net.Conn, error) {
+			return net.Dial("unix", dbSocket)
+		},
+		ReadTimeout:  700 * time.Millisecond,
+		WriteTimeout: 700 * time.Millisecond,
 	}
 
 	requestHandler := func(ctx *fasthttp.RequestCtx) {
@@ -59,31 +60,44 @@ func main() {
 		case ctx.IsPost() && strings.HasPrefix(path, "/payments"):
 			handler.PaymentHandler(defaultChecker, fallbackChecker)(ctx)
 		case ctx.IsGet() && strings.HasPrefix(path, "/payments-summary"):
-			handleProxy(ctx, client, "database:8888")
+			handleProxy(ctx)
 		case ctx.IsPost() && strings.HasPrefix(path, "/purge-payments"):
-			handleProxy(ctx, client, "database:8888")
+			handleProxy(ctx)
 		default:
 			ctx.Error("Not Found", fasthttp.StatusNotFound)
 		}
 	}
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8086"
+	socketPath := os.Getenv("SOCKET_PATH")
+	if socketPath == "" {
+		log.Fatal("SOCKET_PATH environment variable not set")
 	}
-	log.Printf("Payments Service is running on port %s", port)
-	if err := fasthttp.ListenAndServe(":"+port, requestHandler); err != nil {
+	_ = os.Remove(socketPath)
+
+	log.Printf("Payments Service running on socket %s", socketPath)
+	if err := fasthttp.ListenAndServeUNIX(socketPath, 0666, requestHandler); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 	log.Println("Payments Service stopped")
 	log.Println("Exiting...")
 }
 
-func handleProxy(ctx *fasthttp.RequestCtx, client *fasthttp.Client, host string) {
+func handleProxy(ctx *fasthttp.RequestCtx) {
 	req := &ctx.Request
 	resp := &ctx.Response
-	req.SetHost(host)
-	if err := client.Do(req, resp); err != nil {
+
+	path := string(ctx.Path())
+	query := string(ctx.QueryArgs().QueryString())
+
+	fullURI := "http://unix" + path
+	if query != "" {
+		fullURI += "?" + query
+	}
+
+	req.SetRequestURI(fullURI)
+	req.SetHost("unix")
+
+	if err := fastClient.Do(req, resp); err != nil {
 		ctx.Error(err.Error(), fasthttp.StatusBadGateway)
 	}
 }

@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"log"
+	"net"
+	"os"
 	"payments-service/health"
 	"sync"
 	"time"
@@ -30,6 +32,12 @@ var fastClient = &fasthttp.Client{
 		Concurrency:      4096,
 		DNSCacheDuration: time.Hour,
 	}).Dial,
+}
+
+var dbClient = &fasthttp.Client{
+	Dial: func(addr string) (conn net.Conn, err error) {
+		return net.Dial("unix", os.Getenv("DB_SOCKET_PATH"))
+	},
 }
 
 var (
@@ -196,7 +204,7 @@ func SaveToDB(job PaymentJob, processor string) {
 
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
-	req.SetRequestURI("http://database:8888/payments")
+	req.SetRequestURI("http://unix/payments") // path is relative to db server handler
 	req.Header.SetMethod("POST")
 	req.Header.SetContentType("application/json")
 	req.SetBodyRaw(body)
@@ -204,7 +212,7 @@ func SaveToDB(job PaymentJob, processor string) {
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
 
-	if err := fastClient.Do(req, resp); err != nil {
+	if err := dbClient.Do(req, resp); err != nil {
 		log.Printf("[DB] Error sending request: %v", err)
 		return
 	}
