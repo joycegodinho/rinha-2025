@@ -1,5 +1,4 @@
 FROM golang:1.24-alpine AS base
-EXPOSE 8085
 WORKDIR /db
 
 FROM base AS builder

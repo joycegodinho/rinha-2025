@@ -13,6 +13,7 @@ RUN go install github.com/air-verse/air@latest
 COPY load-balancer-backend/ .
 ENTRYPOINT ["air", "-c", "load-balancer-backend/.air.toml"]
 
-FROM scratch AS prod
+FROM golang:1.24-alpine AS prod
+WORKDIR /lbb
 COPY --from=builder /main /main
 CMD ["/main"]

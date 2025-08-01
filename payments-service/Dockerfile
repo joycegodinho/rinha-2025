@@ -1,6 +1,5 @@
 FROM golang:1.24-alpine AS base
 WORKDIR /pps
-EXPOSE 8086
 FROM base AS builder
 COPY go.mod go.sum ./
 RUN go mod download
@@ -17,6 +16,7 @@ COPY payments-service/ .
 # So the .air.toml file is at /pps/payments-service/.air.toml
 ENTRYPOINT ["air", "-c", "payments-service/.air.toml"]
 
-FROM scratch AS prod
+FROM golang:1.24-alpine AS prod
+WORKDIR /pps
 COPY --from=builder /main /main
 CMD ["/main"]
