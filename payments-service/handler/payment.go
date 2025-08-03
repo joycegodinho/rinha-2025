@@ -75,29 +75,29 @@ func PaymentHandler(defaultChecker, fallbackChecker *health.HealthManager) fasth
 	}
 }
 
-const (
-	gracefulLagMs = 100 // Allow default to be up to 100ms slower than fallback
-)
+// const (
+// 	gracefulLagMs = 100 // Allow default to be up to 100ms slower than fallback
+// )
 
-// Select processor by time with graceful lag
-func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
-	if defaultHealth == nil && fallbackHealth == nil {
-		return ""
-	}
-	if defaultHealth.Failing && fallbackHealth.Failing {
-		return ""
-	}
-	if !defaultHealth.Failing && fallbackHealth.Failing {
-		return "default"
-	}
-	if defaultHealth.Failing && !fallbackHealth.Failing {
-		return "fallback"
-	}
-	if defaultHealth.MinResponseTime <= fallbackHealth.MinResponseTime+gracefulLagMs {
-		return "default"
-	}
-	return "fallback"
-}
+// // Select processor by time with graceful lag
+// func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
+// 	if defaultHealth == nil && fallbackHealth == nil {
+// 		return ""
+// 	}
+// 	if defaultHealth.Failing && fallbackHealth.Failing {
+// 		return ""
+// 	}
+// 	if !defaultHealth.Failing && fallbackHealth.Failing {
+// 		return "default"
+// 	}
+// 	if defaultHealth.Failing && !fallbackHealth.Failing {
+// 		return "fallback"
+// 	}
+// 	if defaultHealth.MinResponseTime <= fallbackHealth.MinResponseTime+gracefulLagMs {
+// 		return "default"
+// 	}
+// 	return "fallback"
+// }
 
 // Select processor by time
 // func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
@@ -132,6 +132,20 @@ func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) stri
 // 	}
 // 	return "fallback"
 // }
+
+// Select only default if not failing
+func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
+	if defaultHealth == nil && fallbackHealth == nil {
+		return ""
+	}
+	if defaultHealth.Failing && fallbackHealth.Failing {
+		return ""
+	}
+	if !defaultHealth.Failing {
+		return "default"
+	}
+	return ""
+}
 
 func markProcessorAsFailing(proc string, d *health.HealthManager, f *health.HealthManager) {
 	if proc == "default" {
