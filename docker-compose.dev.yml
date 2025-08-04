@@ -1,4 +1,3 @@
-
 x-base-env: &base-env
   DB_SOCKET_PATH: /sockets/database.sock
 
