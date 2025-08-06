@@ -21,7 +21,6 @@ type PaymentJob struct {
 type ProcessorHealth struct {
 	Failing         bool `json:"failing"`
 	MinResponseTime int  `json:"minResponseTime"`
-	// LastChecked     time.Time `json:"lastChecked,omitempty"`
 }
 
 type HealthInfo struct {
@@ -50,8 +49,8 @@ var (
 
 const (
 	incomingWorkerCount = 15 // Number of workers for new payment requests
-	retryWorkerCount    = 10 // Lower to avoid flooding when under pressure
-	retryDelay          = 5 * time.Millisecond
+	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
+	retryDelay          = 10 * time.Millisecond
 	idleSleep           = 5 * time.Millisecond
 )
 
@@ -74,20 +73,6 @@ var dbClient = &fasthttp.Client{
 
 const MaxAttempts = 5
 
-// func AddToRetryQueue(job PaymentJob) {
-// 	if job.Attempt >= MaxAttempts {
-// 		return
-// 	}
-// 	go func(j PaymentJob) {
-// 		time.Sleep(time.Millisecond * time.Duration(j.Attempt*10))
-// 		select {
-// 		case retryQueue <- j:
-// 		default:
-// 			log.Println("[RetryQueue] Full, dropping job")
-// 		}
-// 	}(job)
-// }
-
 func PaymentHandler() fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
 		var reqBody struct {
@@ -103,12 +88,10 @@ func PaymentHandler() fasthttp.RequestHandler {
 		DefaultProcessorHealth = ProcessorHealth{
 			Failing:         reqBody.HealthStatus.DefaultFailing,
 			MinResponseTime: reqBody.HealthStatus.DefaultMinResponseTime,
-			// LastChecked:     time.Now().UTC(),
 		}
 		FallbackProcessorHealth = ProcessorHealth{
 			Failing:         reqBody.HealthStatus.FallbackFailing,
 			MinResponseTime: reqBody.HealthStatus.FallbackMinResponseTime,
-			// LastChecked:     time.Now().UTC(),
 		}
 		healthMu.Unlock()
 
@@ -126,6 +109,14 @@ func PaymentHandler() fasthttp.RequestHandler {
 }
 
 // Selects the processor based on health status
+// const (
+//
+//	incomingWorkerCount = 15 // Number of workers for new payment requests
+//	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
+//	retryDelay          = 15 * time.Millisecond
+//	idleSleep           = 5 * time.Millisecond
+//
+// )
 // func SelectProcessor() string {
 // 	healthMu.RLock()
 // 	defer healthMu.RUnlock()
@@ -139,21 +130,35 @@ func PaymentHandler() fasthttp.RequestHandler {
 // 	return "fallback"
 // }
 
-// // Select only default if not failing
+// Select only default if not failing
+// const (
+//
+//	incomingWorkerCount = 15 // Number of workers for new payment requests
+//	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
+//	retryDelay          = 10 * time.Millisecond
+//	idleSleep           = 5 * time.Millisecond
+//
+// )
 func SelectProcessor() string {
 	healthMu.RLock()
 	defer healthMu.RUnlock()
 
 	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
-		return "" // Both failing
+		return ""
 	}
 	if !DefaultProcessorHealth.Failing {
 		return "default"
 	}
-	return "" // Fallback is not used in this logic if default is failing
+	return ""
 }
 
 // Select processor by time
+// const (
+// 	incomingWorkerCount = 17 // Number of workers for new payment requests
+// 	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
+// 	retryDelay          = 15 * time.Millisecond
+// 	idleSleep           = 5 * time.Millisecond
+// )
 // func SelectProcessor() string {
 // 	healthMu.RLock()
 // 	defer healthMu.RUnlock()
@@ -174,6 +179,12 @@ func SelectProcessor() string {
 // }
 
 // Select processor by time with graceful lag
+// const (
+// 	incomingWorkerCount = 17 // Number of workers for new payment requests
+// 	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
+// 	retryDelay          = 15 * time.Millisecond
+// 	idleSleep           = 5 * time.Millisecond
+// )
 // const (
 // 	gracefulLag = 100
 // )
@@ -204,11 +215,9 @@ func markProcessorAsFailing(proc string) {
 	if proc == "default" {
 		DefaultProcessorHealth.Failing = true
 		DefaultProcessorHealth.MinResponseTime = 9999
-		// DefaultProcessorHealth.LastChecked = time.Now().UTC()
 	} else {
 		FallbackProcessorHealth.Failing = true
 		FallbackProcessorHealth.MinResponseTime = 9999
-		// FallbackProcessorHealth.LastChecked = time.Now().UTC()
 	}
 }
 
