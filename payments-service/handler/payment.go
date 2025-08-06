@@ -5,7 +5,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"payments-service/health"
 	"sync"
 	"time"
 
@@ -19,6 +18,43 @@ type PaymentJob struct {
 	Attempt       int
 }
 
+type ProcessorHealth struct {
+	Failing         bool `json:"failing"`
+	MinResponseTime int  `json:"minResponseTime"`
+	// LastChecked     time.Time `json:"lastChecked,omitempty"`
+}
+
+type HealthInfo struct {
+	DefaultFailing          bool `json:"defaultFailing"`
+	DefaultMinResponseTime  int  `json:"defaultMinResponseTime"`
+	FallbackFailing         bool `json:"fallbackFailing"`
+	FallbackMinResponseTime int  `json:"fallbackMinResponseTime"`
+}
+
+var (
+	DefaultProcessorHealth  ProcessorHealth
+	FallbackProcessorHealth ProcessorHealth
+	healthMu                sync.RWMutex
+
+	incomingQueue []PaymentJob
+	retryQueue    []PaymentJob
+	queueMu       sync.Mutex
+)
+
+// const (
+// 	incomingWorkerCount = 15 // Number of workers for new payment requests
+// 	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
+// 	retryDelay          = 15 * time.Millisecond
+// 	idleSleep           = 5 * time.Millisecond
+// )
+
+const (
+	incomingWorkerCount = 15 // Number of workers for new payment requests
+	retryWorkerCount    = 10 // Lower to avoid flooding when under pressure
+	retryDelay          = 5 * time.Millisecond
+	idleSleep           = 5 * time.Millisecond
+)
+
 var fastClient = &fasthttp.Client{
 	MaxConnsPerHost:               256,
 	ReadTimeout:                   700 * time.Millisecond,
@@ -28,148 +64,167 @@ var fastClient = &fasthttp.Client{
 	NoDefaultUserAgentHeader:      true,
 	DisableHeaderNamesNormalizing: true,
 	DisablePathNormalizing:        true,
-	Dial: (&fasthttp.TCPDialer{
-		Concurrency:      4096,
-		DNSCacheDuration: time.Hour,
-	}).Dial,
 }
 
 var dbClient = &fasthttp.Client{
-	Dial: func(addr string) (conn net.Conn, err error) {
+	Dial: func(addr string) (net.Conn, error) {
 		return net.Dial("unix", os.Getenv("DB_SOCKET_PATH"))
 	},
 }
 
-var (
-	retryQueue []PaymentJob
-	retryMu    sync.Mutex
-)
-
 const MaxAttempts = 5
 
-func AddToRetryQueue(job PaymentJob) {
-	retryMu.Lock()
-	defer retryMu.Unlock()
-	retryQueue = append(retryQueue, job)
-}
+// func AddToRetryQueue(job PaymentJob) {
+// 	if job.Attempt >= MaxAttempts {
+// 		return
+// 	}
+// 	go func(j PaymentJob) {
+// 		time.Sleep(time.Millisecond * time.Duration(j.Attempt*10))
+// 		select {
+// 		case retryQueue <- j:
+// 		default:
+// 			log.Println("[RetryQueue] Full, dropping job")
+// 		}
+// 	}(job)
+// }
 
-func PaymentHandler(defaultChecker, fallbackChecker *health.HealthManager) fasthttp.RequestHandler {
+func PaymentHandler() fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
-		var req struct {
-			CorrelationID string  `json:"correlationId"`
-			Amount        float64 `json:"amount"`
+		var reqBody struct {
+			CorrelationID string     `json:"correlationId"`
+			Amount        float64    `json:"amount"`
+			HealthStatus  HealthInfo `json:"health_status"`
 		}
 
-		json.Unmarshal(ctx.PostBody(), &req)
+		_ = json.Unmarshal(ctx.PostBody(), &reqBody)
+
+		// Update global health info
+		healthMu.Lock()
+		DefaultProcessorHealth = ProcessorHealth{
+			Failing:         reqBody.HealthStatus.DefaultFailing,
+			MinResponseTime: reqBody.HealthStatus.DefaultMinResponseTime,
+			// LastChecked:     time.Now().UTC(),
+		}
+		FallbackProcessorHealth = ProcessorHealth{
+			Failing:         reqBody.HealthStatus.FallbackFailing,
+			MinResponseTime: reqBody.HealthStatus.FallbackMinResponseTime,
+			// LastChecked:     time.Now().UTC(),
+		}
+		healthMu.Unlock()
 
 		job := PaymentJob{
-			CorrelationID: req.CorrelationID,
-			Amount:        req.Amount,
+			CorrelationID: reqBody.CorrelationID,
+			Amount:        reqBody.Amount,
 			RequestedAt:   time.Now().UTC(),
 			Attempt:       0,
 		}
 
-		go ProcessPayment(job, defaultChecker, fallbackChecker)
+		EnqueueIncoming(job)
 
 		ctx.SetStatusCode(fasthttp.StatusAccepted)
 	}
 }
 
-// const (
-// 	gracefulLagMs = 100 // Allow default to be up to 100ms slower than fallback
-// )
+// Selects the processor based on health status
+// func SelectProcessor() string {
+// 	healthMu.RLock()
+// 	defer healthMu.RUnlock()
 
-// // Select processor by time with graceful lag
-// func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
-// 	if defaultHealth == nil && fallbackHealth == nil {
+// 	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
 // 		return ""
 // 	}
-// 	if defaultHealth.Failing && fallbackHealth.Failing {
-// 		return ""
-// 	}
-// 	if !defaultHealth.Failing && fallbackHealth.Failing {
-// 		return "default"
-// 	}
-// 	if defaultHealth.Failing && !fallbackHealth.Failing {
-// 		return "fallback"
-// 	}
-// 	if defaultHealth.MinResponseTime <= fallbackHealth.MinResponseTime+gracefulLagMs {
+// 	if !DefaultProcessorHealth.Failing {
 // 		return "default"
 // 	}
 // 	return "fallback"
 // }
 
-// Select processor by time
-// func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
-// 	if defaultHealth == nil && fallbackHealth == nil {
-// 		return ""
-// 	}
-// 	if defaultHealth.Failing && fallbackHealth.Failing {
-// 		return ""
-// 	}
-// 	if !defaultHealth.Failing && fallbackHealth.Failing {
-// 		return "default"
-// 	}
-// 	if defaultHealth.Failing && !fallbackHealth.Failing {
-// 		return "fallback"
-// 	}
-// 	if defaultHealth.MinResponseTime <= fallbackHealth.MinResponseTime {
-// 		return "default"
-// 	}
-// 	return "fallback"
-// }
+// // Select only default if not failing
+func SelectProcessor() string {
+	healthMu.RLock()
+	defer healthMu.RUnlock()
 
-// Select default if on
-// func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
-// 	if defaultHealth == nil && fallbackHealth == nil {
-// 		return ""
-// 	}
-// 	if defaultHealth.Failing && fallbackHealth.Failing {
-// 		return ""
-// 	}
-// 	if !defaultHealth.Failing {
-// 		return "default"
-// 	}
-// 	return "fallback"
-// }
-
-// Select only default if not failing
-func SelectProcessor(defaultHealth, fallbackHealth *health.ProcessorHealth) string {
-	if defaultHealth == nil && fallbackHealth == nil {
-		return ""
+	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
+		return "" // Both failing
 	}
-	if defaultHealth.Failing && fallbackHealth.Failing {
-		return ""
-	}
-	if !defaultHealth.Failing {
+	if !DefaultProcessorHealth.Failing {
 		return "default"
 	}
-	return ""
+	return "" // Fallback is not used in this logic if default is failing
 }
 
-func markProcessorAsFailing(proc string, d *health.HealthManager, f *health.HealthManager) {
+// Select processor by time
+// func SelectProcessor() string {
+// 	healthMu.RLock()
+// 	defer healthMu.RUnlock()
+
+// 	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
+// 		return ""
+// 	}
+// 	if !DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
+// 		return "default"
+// 	}
+// 	if DefaultProcessorHealth.Failing && !FallbackProcessorHealth.Failing {
+// 		return "fallback"
+// 	}
+// 	if DefaultProcessorHealth.MinResponseTime <= FallbackProcessorHealth.MinResponseTime {
+// 		return "default"
+// 	}
+// 	return "fallback"
+// }
+
+// Select processor by time with graceful lag
+// const (
+// 	gracefulLag = 100
+// )
+
+// func SelectProcessor() string {
+// 	healthMu.RLock()
+// 	defer healthMu.RUnlock()
+
+// 	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
+// 		return ""
+// 	}
+// 	if !DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
+// 		return "default"
+// 	}
+// 	if DefaultProcessorHealth.Failing && !FallbackProcessorHealth.Failing {
+// 		return "fallback"
+// 	}
+// 	if DefaultProcessorHealth.MinResponseTime <= FallbackProcessorHealth.MinResponseTime+gracefulLag {
+// 		return "default"
+// 	}
+// 	return "fallback"
+// }
+
+func markProcessorAsFailing(proc string) {
+	healthMu.Lock()
+	defer healthMu.Unlock()
+
 	if proc == "default" {
-		d.SaveHealthToRedis(true, 9999)
+		DefaultProcessorHealth.Failing = true
+		DefaultProcessorHealth.MinResponseTime = 9999
+		// DefaultProcessorHealth.LastChecked = time.Now().UTC()
 	} else {
-		f.SaveHealthToRedis(true, 9999)
+		FallbackProcessorHealth.Failing = true
+		FallbackProcessorHealth.MinResponseTime = 9999
+		// FallbackProcessorHealth.LastChecked = time.Now().UTC()
 	}
 }
 
-func ProcessPayment(job PaymentJob, defaultChecker, fallbackChecker *health.HealthManager) bool {
-	defaultHealth, _ := defaultChecker.GetHealth()
-	fallbackHealth, _ := fallbackChecker.GetHealth()
-
-	processor := SelectProcessor(defaultHealth, fallbackHealth)
+func ProcessPayment(job PaymentJob) bool {
+	processor := SelectProcessor()
 	if processor == "" {
+		job.Attempt++
 		AddToRetryQueue(job)
 		return false
 	}
 
-	endpoint := "http://payment-processor-fallback:8080/payments"
-
-	if processor == "default" {
-		endpoint = "http://payment-processor-default:8080/payments"
+	endpoint := "http://payment-processor-default:8080/payments"
+	if processor == "fallback" {
+		endpoint = "http://payment-processor-fallback:8080/payments"
 	}
+
 	payload := map[string]any{
 		"correlationId": job.CorrelationID,
 		"amount":        job.Amount,
@@ -187,20 +242,17 @@ func ProcessPayment(job PaymentJob, defaultChecker, fallbackChecker *health.Heal
 
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
-	// err := fastClient.Do(req, resp)
+
 	err := fastClient.DoTimeout(req, resp, 6*time.Second)
 	if err != nil || resp.StatusCode() >= 500 {
-		markProcessorAsFailing(processor, defaultChecker, fallbackChecker)
+		markProcessorAsFailing(processor)
 		job.Attempt++
-		if job.Attempt < MaxAttempts {
-			AddToRetryQueue(job)
-		}
+		AddToRetryQueue(job)
 		return false
 	}
 
 	SaveToDB(job, processor)
 	return true
-
 }
 
 func SaveToDB(job PaymentJob, processor string) {
@@ -218,7 +270,7 @@ func SaveToDB(job PaymentJob, processor string) {
 
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
-	req.SetRequestURI("http://unix/payments") // path is relative to db server handler
+	req.SetRequestURI("http://unix/payments")
 	req.Header.SetMethod("POST")
 	req.Header.SetContentType("application/json")
 	req.SetBodyRaw(body)
@@ -236,25 +288,61 @@ func SaveToDB(job PaymentJob, processor string) {
 	}
 }
 
-func StartRetryWorker(defaultChecker, fallbackChecker *health.HealthManager) {
-	const workerCount = 30
+func EnqueueIncoming(job PaymentJob) {
+	queueMu.Lock()
+	incomingQueue = append(incomingQueue, job)
+	queueMu.Unlock()
+}
 
-	for i := 0; i < workerCount; i++ {
-		go func(workerID int) {
-			for {
-				retryMu.Lock()
-				if len(retryQueue) == 0 {
-					retryMu.Unlock()
-					time.Sleep(1 * time.Millisecond)
-					continue
-				}
+func AddToRetryQueue(job PaymentJob) {
+	queueMu.Lock()
+	retryQueue = append(retryQueue, job)
+	queueMu.Unlock()
+}
 
-				job := retryQueue[0]
-				retryQueue = retryQueue[1:]
-				retryMu.Unlock()
+func StartWorkers() {
+	for i := 0; i < incomingWorkerCount; i++ {
+		go incomingWorker(i)
+	}
+	for i := 0; i < retryWorkerCount; i++ {
+		go retryWorker(i)
+	}
+}
 
-				ProcessPayment(job, defaultChecker, fallbackChecker)
-			}
-		}(i)
+func incomingWorker(id int) {
+	for {
+		queueMu.Lock()
+		if len(incomingQueue) == 0 {
+			queueMu.Unlock()
+			time.Sleep(idleSleep)
+			continue
+		}
+		job := incomingQueue[0]
+		incomingQueue = incomingQueue[1:]
+		queueMu.Unlock()
+
+		// start := time.Now()
+		ProcessPayment(job)
+		// log.Printf("[Worker %d] Incoming processed in %v", id, time.Since(start))
+	}
+}
+
+func retryWorker(id int) {
+	for {
+		queueMu.Lock()
+		if len(retryQueue) == 0 {
+			queueMu.Unlock()
+			time.Sleep(idleSleep)
+			continue
+		}
+		job := retryQueue[0]
+		retryQueue = retryQueue[1:]
+		queueMu.Unlock()
+
+		time.Sleep(retryDelay)
+
+		// start := time.Now()
+		ProcessPayment(job)
+		// log.Printf("[RetryWorker %d] Retry processed in %v", id, time.Since(start))
 	}
 }
