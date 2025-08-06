@@ -12,22 +12,11 @@ import (
 )
 
 func main() {
-	fileDB := db.NewFileDB("./payments.json1")
-	defer fileDB.Close()
-
 	database := db.NewDB()
 
-	if records, err := fileDB.LoadRecords(); err == nil {
-		for _, record := range records {
-			database.AddRecord(record)
-		}
-	} else {
-		log.Printf("Failed to load initial records: %v", err)
-	}
-
-	paymentHandler := handler.PaymentHandler(database, fileDB)
+	paymentHandler := handler.PaymentHandler(database)
 	summaryHandler := handler.SummaryHandler(database)
-	purgePaymentsHandler := handler.PurgePaymentsHandler(database, fileDB)
+	purgePaymentsHandler := handler.PurgePaymentsHandler(database)
 
 	requestHandler := func(ctx *fasthttp.RequestCtx) {
 		switch string(ctx.Path()) {

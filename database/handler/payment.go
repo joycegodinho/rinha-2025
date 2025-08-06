@@ -10,7 +10,7 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-func PaymentHandler(memoryDB *db.PaymentDB, fileDB *db.FileDB) fasthttp.RequestHandler {
+func PaymentHandler(memoryDB *db.PaymentDB) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
 		var request api.PaymentRequest
 		if err := json.Unmarshal(ctx.PostBody(), &request); err != nil {
@@ -36,7 +36,6 @@ func PaymentHandler(memoryDB *db.PaymentDB, fileDB *db.FileDB) fasthttp.RequestH
 		}
 
 		memoryDB.AddRecord(record)
-		go fileDB.SaveRecord(record)
 
 		ctx.SetStatusCode(fasthttp.StatusCreated)
 	}
