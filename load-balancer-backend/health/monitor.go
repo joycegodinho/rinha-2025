@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	// "fmt"
 	"log"
-
-	// "math/rand"
 	"sync"
 	"time"
 
@@ -21,7 +19,6 @@ var (
 type ProcessorHealth struct {
 	Failing         bool `json:"failing"`
 	MinResponseTime int  `json:"minResponseTime"`
-	// LastChecked     time.Time `json:"lastChecked,omitempty"`
 }
 
 type HealthManager struct {
@@ -37,7 +34,6 @@ func (h *HealthManager) CheckAndUpdateHealth() {
 }
 
 func (h *HealthManager) updateHealth() {
-	// time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
 	req := fasthttp.AcquireRequest()
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseRequest(req)
@@ -95,7 +91,6 @@ func (h *HealthManager) SaveHealth(failing bool, minResp int) {
 	health := ProcessorHealth{
 		Failing:         failing,
 		MinResponseTime: minResp,
-		// LastChecked:     time.Now().UTC(),
 	}
 
 	if h.Processor == "default" {

@@ -138,9 +138,11 @@ func main() {
 			Dial: func(addr string) (net.Conn, error) {
 				return net.Dial("unix", socketPath)
 			},
-			ReadTimeout:                   700 * time.Millisecond,
-			WriteTimeout:                  700 * time.Millisecond,
-			MaxConns:                      256,
+			ReadTimeout:  700 * time.Millisecond,
+			WriteTimeout: 700 * time.Millisecond,
+			MaxConns:     256,
+			// MaxIdleConnDuration:           10 * time.Second,
+			// MaxConnWaitTimeout:            100 * time.Millisecond,
 			ReadBufferSize:                1024,
 			WriteBufferSize:               1024,
 			NoDefaultUserAgentHeader:      true,

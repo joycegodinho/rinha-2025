@@ -2,15 +2,6 @@ x-base-env: &base-env
   DB_SOCKET_PATH: /sockets/database.sock
 
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    networks:
-      - backend
-
   payments-service: &payments-service
     build:
       context: .
@@ -25,12 +16,10 @@ services:
       - sockets-volume:/sockets
     working_dir: /pps
     depends_on:
-      - redis
       - database
     networks:
       - backend
       - payment-processor
-
 
   payments-service-2:
     <<: *payments-service
@@ -47,7 +36,6 @@ services:
       - sockets-volume:/sockets
     working_dir: /pps2/
     depends_on:
-      - redis
       - database
     networks:
       - backend
@@ -72,6 +60,7 @@ services:
       - payments-service-2
     networks:
       - backend
+      - payment-processor
 
   database:
     build:

@@ -1,23 +1,6 @@
 x-base-env: &base-env
   DB_SOCKET_PATH: /sockets/database.sock
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - ./redis.conf:/usr/local/etc/redis/redis.conf
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-    networks:
-      - backend
-    deploy:
-      resources:
-        limits:
-          cpus: "0.4"
-          memory: "30MB"
-
   payments-service: &payments-service
     image: joycegodinhoo/payments-service:latest
     container_name: payments-service
@@ -30,16 +13,15 @@ services:
       - sockets-volume:/sockets
     working_dir: /pps
     depends_on:
-      - redis
       - database
     networks:
       - backend
       - payment-processor
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: "0.5"
-    #       memory: "70MB"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "85MB"
 
   payments-service-2:
     <<: *payments-service
@@ -54,16 +36,15 @@ services:
       - sockets-volume:/sockets
     working_dir: /pps2/
     depends_on:
-      - redis
       - database
     networks:
       - backend
       - payment-processor
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: "0.5"
-    #       memory: "70MB"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "85MB"
 
   load-balancer-backend:
     image: joycegodinhoo/load-balancer-backend:latest
@@ -81,11 +62,12 @@ services:
       - payments-service-2
     networks:
       - backend
+      - payment-processor
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: "80MB"
+          cpus: "0.45"
+          memory: "100MB"
 
   database:
     image: joycegodinhoo/database:latest
@@ -99,8 +81,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: "100MB"
+          cpus: "0.15"
+          memory: "80MB"
 
 networks:
   backend:
