@@ -16,6 +16,13 @@ type LoadBalancer struct {
 	roundRobinCount uint64
 }
 
+type HealthInfo struct {
+	DefaultFailing          bool `json:"defaultFailing"`
+	DefaultMinResponseTime  int  `json:"defaultMinResponseTime"`
+	FallbackFailing         bool `json:"fallbackFailing"`
+	FallbackMinResponseTime int  `json:"fallbackMinResponseTime"`
+}
+
 func (lb *LoadBalancer) Handler(ctx *fasthttp.RequestCtx) {
 	next := lb.nextIndex()
 	client := lb.clients[next]
@@ -36,6 +43,19 @@ func (lb *LoadBalancer) nextIndex() int {
 }
 
 func main() {
+	// Start health checkers in the background
+	defaultChecker := &health.HealthManager{
+		Processor: "default",
+		Endpoint:  "http://payment-processor-default:8080/payments/service-health",
+	}
+	go defaultChecker.CheckAndUpdateHealth()
+
+	fallbackChecker := &health.HealthManager{
+		Processor: "fallback",
+		Endpoint:  "http://payment-processor-fallback:8080/payments/service-health",
+	}
+	go fallbackChecker.CheckAndUpdateHealth()
+
 	// Paths to your Unix socket files (shared via Docker volume)
 	socketPaths := []string{
 		"/sockets/payments-service-1.sock",

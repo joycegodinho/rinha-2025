@@ -1,45 +1,20 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net"
 	"os"
 	"payments-service/handler"
-	"payments-service/health"
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/valyala/fasthttp"
 )
 
 var fastClient *fasthttp.Client
 
 func main() {
-	rdb := redis.NewClient(&redis.Options{
-		Addr: "redis:6379",
-	})
-
-	ctx := context.Background()
-
-	defaultChecker := &health.HealthManager{
-		Redis:     rdb,
-		Processor: "default",
-		Endpoint:  "http://payment-processor-default:8080/payments/service-health",
-		Ctx:       ctx,
-	}
-	go defaultChecker.CheckAndUpdateHealth()
-
-	fallbackChecker := &health.HealthManager{
-		Redis:     rdb,
-		Processor: "fallback",
-		Endpoint:  "http://payment-processor-fallback:8080/payments/service-health",
-		Ctx:       ctx,
-	}
-	go fallbackChecker.CheckAndUpdateHealth()
-
-	go handler.StartRetryWorker(defaultChecker, fallbackChecker)
+	go handler.StartWorkers()
 
 	dbSocket := os.Getenv("DB_SOCKET_PATH")
 	if dbSocket == "" {
@@ -58,7 +33,7 @@ func main() {
 		path := string(ctx.Path())
 		switch {
 		case ctx.IsPost() && strings.HasPrefix(path, "/payments"):
-			handler.PaymentHandler(defaultChecker, fallbackChecker)(ctx)
+			handler.PaymentHandler()(ctx)
 		case ctx.IsGet() && strings.HasPrefix(path, "/payments-summary"):
 			handleProxy(ctx)
 		case ctx.IsPost() && strings.HasPrefix(path, "/purge-payments"):
