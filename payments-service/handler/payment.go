@@ -1,61 +1,53 @@
 package handler
 
 import (
-	"encoding/json"
+	"bytes"
 	"log"
 	"net"
 	"os"
 	"sync"
 	"time"
 
+	json "github.com/bytedance/sonic"
+
 	"github.com/valyala/fasthttp"
 )
 
 type PaymentJob struct {
-	CorrelationID string
-	Amount        float64
-	RequestedAt   time.Time
-	Attempt       int
+	CorrelationID string  `json:"correlationId"`
+	Amount        float64 `json:"amount"`
+	Attempt       int     `json:"attempt,omitempty"`
 }
-
 type ProcessorHealth struct {
 	Failing         bool `json:"failing"`
 	MinResponseTime int  `json:"minResponseTime"`
 }
 
-type HealthInfo struct {
-	DefaultFailing          bool `json:"defaultFailing"`
-	DefaultMinResponseTime  int  `json:"defaultMinResponseTime"`
-	FallbackFailing         bool `json:"fallbackFailing"`
-	FallbackMinResponseTime int  `json:"fallbackMinResponseTime"`
-}
-
 var (
-	DefaultProcessorHealth  ProcessorHealth
-	FallbackProcessorHealth ProcessorHealth
+	DefaultProcessorHealth  ProcessorHealth = ProcessorHealth{Failing: false, MinResponseTime: 0}
+	FallbackProcessorHealth ProcessorHealth = ProcessorHealth{Failing: false, MinResponseTime: 0}
 	healthMu                sync.RWMutex
 
-	incomingQueue []PaymentJob
-	retryQueue    []PaymentJob
+	incomingQueue []*PaymentJob
+	retryQueue    []*PaymentJob
 	queueMu       sync.Mutex
 )
 
-// const (
-// 	incomingWorkerCount = 15 // Number of workers for new payment requests
-// 	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
-// 	retryDelay          = 15 * time.Millisecond
-// 	idleSleep           = 5 * time.Millisecond
-// )
+type PaymentPayload struct {
+	CorrelationID string    `json:"correlationId"`
+	Amount        float64   `json:"amount"`
+	RequestedAt   time.Time `json:"requestedAt"`
+}
 
 const (
-	incomingWorkerCount = 15 // Number of workers for new payment requests
-	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
+	incomingWorkerCount = 8  // Number of workers for new payment requests
+	retryWorkerCount    = 10 // Lower to avoid flooding when under pressure
 	retryDelay          = 10 * time.Millisecond
 	idleSleep           = 5 * time.Millisecond
 )
 
 var fastClient = &fasthttp.Client{
-	MaxConnsPerHost:               256,
+	MaxConnsPerHost:               512,
 	ReadTimeout:                   700 * time.Millisecond,
 	WriteTimeout:                  700 * time.Millisecond,
 	ReadBufferSize:                1024,
@@ -65,9 +57,28 @@ var fastClient = &fasthttp.Client{
 	DisablePathNormalizing:        true,
 }
 
-var dbClient = &fasthttp.Client{
+var DBClient = &fasthttp.Client{
+	MaxConnsPerHost:               512,
+	ReadTimeout:                   700 * time.Millisecond,
+	WriteTimeout:                  700 * time.Millisecond,
+	ReadBufferSize:                1024,
+	WriteBufferSize:               1024,
+	NoDefaultUserAgentHeader:      true,
+	DisableHeaderNamesNormalizing: true,
+	DisablePathNormalizing:        true,
 	Dial: func(addr string) (net.Conn, error) {
 		return net.Dial("unix", os.Getenv("DB_SOCKET_PATH"))
+	},
+}
+
+var PayloadPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
+var PayloadDBPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
 	},
 }
 
@@ -75,32 +86,13 @@ const MaxAttempts = 5
 
 func PaymentHandler() fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
-		var reqBody struct {
-			CorrelationID string     `json:"correlationId"`
-			Amount        float64    `json:"amount"`
-			HealthStatus  HealthInfo `json:"health_status"`
-		}
+		var job *PaymentJob
 
-		_ = json.Unmarshal(ctx.PostBody(), &reqBody)
+		// start := time.Now()
+		_ = json.ConfigDefault.Unmarshal(ctx.PostBody(), &job)
+		// fmt.Printf("Time to unmarshal: %v\n", time.Since(start))
 
-		// Update global health info
-		healthMu.Lock()
-		DefaultProcessorHealth = ProcessorHealth{
-			Failing:         reqBody.HealthStatus.DefaultFailing,
-			MinResponseTime: reqBody.HealthStatus.DefaultMinResponseTime,
-		}
-		FallbackProcessorHealth = ProcessorHealth{
-			Failing:         reqBody.HealthStatus.FallbackFailing,
-			MinResponseTime: reqBody.HealthStatus.FallbackMinResponseTime,
-		}
-		healthMu.Unlock()
-
-		job := PaymentJob{
-			CorrelationID: reqBody.CorrelationID,
-			Amount:        reqBody.Amount,
-			RequestedAt:   time.Now().UTC(),
-			Attempt:       0,
-		}
+		job.Attempt = 0
 
 		EnqueueIncoming(job)
 
@@ -108,37 +100,100 @@ func PaymentHandler() fasthttp.RequestHandler {
 	}
 }
 
-// Selects the processor based on health status
-// const (
-//
-//	incomingWorkerCount = 15 // Number of workers for new payment requests
-//	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
-//	retryDelay          = 15 * time.Millisecond
-//	idleSleep           = 5 * time.Millisecond
-//
-// )
-// func SelectProcessor() string {
-// 	healthMu.RLock()
-// 	defer healthMu.RUnlock()
+func ProcessPayment(job *PaymentJob) bool {
+	processor := SelectProcessor()
+	if processor == "" {
+		AddToRetryQueue(job)
+		return false
+	}
 
-// 	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
-// 		return ""
-// 	}
-// 	if !DefaultProcessorHealth.Failing {
-// 		return "default"
-// 	}
-// 	return "fallback"
-// }
+	endpoint := "http://payment-processor-default:8080/payments"
+	if processor == "fallback" {
+		endpoint = "http://payment-processor-fallback:8080/payments"
+	}
+
+	payload := PaymentPayload{
+		CorrelationID: job.CorrelationID,
+		Amount:        job.Amount,
+		RequestedAt:   time.Now().UTC(),
+	}
+
+	buf := PayloadPool.Get().(*bytes.Buffer)
+	defer PayloadPool.Put(buf)
+	buf.Reset()
+
+	if err := json.ConfigDefault.NewEncoder(buf).Encode(payload); err != nil {
+		log.Printf("[Payment] Error encoding payload: %v", err)
+		return false
+	}
+
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+	req.SetRequestURI(endpoint)
+	req.Header.SetMethod("POST")
+	req.Header.SetContentType("application/json")
+	req.SetBodyRaw(buf.Bytes())
+
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(resp)
+
+	err := fastClient.DoTimeout(req, resp, 8*time.Second)
+	if err != nil || resp.StatusCode() >= 500 {
+		markProcessorAsFailing(processor)
+		job.Attempt++
+		if job.Attempt > MaxAttempts {
+			log.Printf("[Payment] Max attempts reached for job: %v", job)
+			return false
+		}
+		AddToRetryQueue(job)
+		return false
+	}
+
+	SaveToDB(buf.Bytes(), processor)
+	return true
+}
+
+func SaveToDB(body []byte, processor string) {
+	trimmed := bytes.TrimRight(body, " \t\r\n")
+
+	if len(trimmed) == 0 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		log.Printf("[DB] Unexpected JSON format, cannot append serverType")
+		return
+	}
+
+	buf := PayloadDBPool.Get().(*bytes.Buffer)
+	defer PayloadDBPool.Put(buf)
+	buf.Reset()
+
+	// Write original JSON without trailing '}'
+	buf.Write(trimmed[:len(trimmed)-1])
+
+	// Append , "serverType":"processor"}
+	buf.WriteString(`,"serverType":"`)
+	buf.WriteString(processor)
+	buf.WriteString(`"}`)
+
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+	req.SetRequestURI("http://unix/payments")
+	req.Header.SetMethod("POST")
+	req.Header.SetContentType("application/json")
+	req.SetBodyRaw(buf.Bytes())
+
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(resp)
+
+	if err := DBClient.Do(req, resp); err != nil {
+		log.Printf("[DB] Error sending request: %v", err)
+		return
+	}
+
+	if resp.StatusCode() >= 300 {
+		log.Printf("[DB] Unexpected status: %d", resp.StatusCode())
+	}
+}
 
 // Select only default if not failing
-// const (
-//
-//	incomingWorkerCount = 15 // Number of workers for new payment requests
-//	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
-//	retryDelay          = 10 * time.Millisecond
-//	idleSleep           = 5 * time.Millisecond
-//
-// )
 func SelectProcessor() string {
 	healthMu.RLock()
 	defer healthMu.RUnlock()
@@ -151,62 +206,6 @@ func SelectProcessor() string {
 	}
 	return ""
 }
-
-// Select processor by time
-// const (
-// 	incomingWorkerCount = 17 // Number of workers for new payment requests
-// 	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
-// 	retryDelay          = 15 * time.Millisecond
-// 	idleSleep           = 5 * time.Millisecond
-// )
-// func SelectProcessor() string {
-// 	healthMu.RLock()
-// 	defer healthMu.RUnlock()
-
-// 	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
-// 		return ""
-// 	}
-// 	if !DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
-// 		return "default"
-// 	}
-// 	if DefaultProcessorHealth.Failing && !FallbackProcessorHealth.Failing {
-// 		return "fallback"
-// 	}
-// 	if DefaultProcessorHealth.MinResponseTime <= FallbackProcessorHealth.MinResponseTime {
-// 		return "default"
-// 	}
-// 	return "fallback"
-// }
-
-// Select processor by time with graceful lag
-// const (
-// 	incomingWorkerCount = 17 // Number of workers for new payment requests
-// 	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
-// 	retryDelay          = 15 * time.Millisecond
-// 	idleSleep           = 5 * time.Millisecond
-// )
-// const (
-// 	gracefulLag = 100
-// )
-
-// func SelectProcessor() string {
-// 	healthMu.RLock()
-// 	defer healthMu.RUnlock()
-
-// 	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
-// 		return ""
-// 	}
-// 	if !DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
-// 		return "default"
-// 	}
-// 	if DefaultProcessorHealth.Failing && !FallbackProcessorHealth.Failing {
-// 		return "fallback"
-// 	}
-// 	if DefaultProcessorHealth.MinResponseTime <= FallbackProcessorHealth.MinResponseTime+gracefulLag {
-// 		return "default"
-// 	}
-// 	return "fallback"
-// }
 
 func markProcessorAsFailing(proc string) {
 	healthMu.Lock()
@@ -221,89 +220,13 @@ func markProcessorAsFailing(proc string) {
 	}
 }
 
-func ProcessPayment(job PaymentJob) bool {
-	processor := SelectProcessor()
-	if processor == "" {
-		job.Attempt++
-		AddToRetryQueue(job)
-		return false
-	}
-
-	endpoint := "http://payment-processor-default:8080/payments"
-	if processor == "fallback" {
-		endpoint = "http://payment-processor-fallback:8080/payments"
-	}
-
-	payload := map[string]any{
-		"correlationId": job.CorrelationID,
-		"amount":        job.Amount,
-		"requestedAt":   job.RequestedAt,
-	}
-
-	body, _ := json.Marshal(payload)
-
-	req := fasthttp.AcquireRequest()
-	defer fasthttp.ReleaseRequest(req)
-	req.SetRequestURI(endpoint)
-	req.Header.SetMethod("POST")
-	req.Header.SetContentType("application/json")
-	req.SetBodyRaw(body)
-
-	resp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseResponse(resp)
-
-	err := fastClient.DoTimeout(req, resp, 6*time.Second)
-	if err != nil || resp.StatusCode() >= 500 {
-		markProcessorAsFailing(processor)
-		job.Attempt++
-		AddToRetryQueue(job)
-		return false
-	}
-
-	SaveToDB(job, processor)
-	return true
-}
-
-func SaveToDB(job PaymentJob, processor string) {
-	payload := map[string]any{
-		"amount":      job.Amount,
-		"serverType":  processor,
-		"requestedAt": job.RequestedAt,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		log.Printf("[DB] Error marshaling payload: %v", err)
-		return
-	}
-
-	req := fasthttp.AcquireRequest()
-	defer fasthttp.ReleaseRequest(req)
-	req.SetRequestURI("http://unix/payments")
-	req.Header.SetMethod("POST")
-	req.Header.SetContentType("application/json")
-	req.SetBodyRaw(body)
-
-	resp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseResponse(resp)
-
-	if err := dbClient.Do(req, resp); err != nil {
-		log.Printf("[DB] Error sending request: %v", err)
-		return
-	}
-
-	if resp.StatusCode() >= 300 {
-		log.Printf("[DB] Unexpected status: %d", resp.StatusCode())
-	}
-}
-
-func EnqueueIncoming(job PaymentJob) {
+func EnqueueIncoming(job *PaymentJob) {
 	queueMu.Lock()
 	incomingQueue = append(incomingQueue, job)
 	queueMu.Unlock()
 }
 
-func AddToRetryQueue(job PaymentJob) {
+func AddToRetryQueue(job *PaymentJob) {
 	queueMu.Lock()
 	retryQueue = append(retryQueue, job)
 	queueMu.Unlock()
