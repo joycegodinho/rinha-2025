@@ -125,8 +125,6 @@ func (h *HealthManager) updateHealth() {
 		log.Printf("Health update push for %s received non-OK status code: %d", h.Processor, respPush.StatusCode())
 		return
 	}
-
-	// log.Printf("Health update push for %s sent successfully.", h.Processor)
 }
 
 func (h *HealthManager) SaveIndividualHealth(failing bool, minResp int) {

@@ -92,7 +92,6 @@ func (db *PaymentDB) QuerySummary(from, to time.Time) map[string]*api.Summary {
 	startIdx := sort.Search(len(db.timeIndex), func(i int) bool {
 		return !db.timeIndex[i].StartTime.Before(fromMS)
 	})
-
 	// Process buckets in time range
 	for i := startIdx; i < len(db.timeIndex); i++ {
 		bucket := db.timeIndex[i]

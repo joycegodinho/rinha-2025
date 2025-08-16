@@ -2,10 +2,7 @@ package handler
 
 import (
 	"encoding/json"
-	// "fmt"
 	"log"
-
-	//"time"
 
 	"github.com/valyala/fasthttp"
 )
@@ -25,7 +22,6 @@ func HealthUpdateHandler() fasthttp.RequestHandler {
 			ctx.Error("Invalid request body", fasthttp.StatusBadRequest)
 			return
 		}
-		// fmt.Printf("Received health update: %+v\n", healthInfo)
 
 		healthMu.Lock()
 		defer healthMu.Unlock()
