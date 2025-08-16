@@ -1,13 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"load-balancer-backend/config"
 	"load-balancer-backend/health"
 	"log"
 	"net"
 	"os"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,93 +16,6 @@ import (
 type LoadBalancer struct {
 	clients         []*fasthttp.HostClient
 	roundRobinCount uint64
-}
-
-type HealthInfo struct {
-	DefaultFailing          bool `json:"defaultFailing"`
-	DefaultMinResponseTime  int  `json:"defaultMinResponseTime"`
-	FallbackFailing         bool `json:"fallbackFailing"`
-	FallbackMinResponseTime int  `json:"fallbackMinResponseTime"`
-}
-
-var bodyPool = sync.Pool{
-	New: func() any {
-		return make([]byte, 0, 1024) // tuned size
-	},
-}
-
-func (lb *LoadBalancer) Handler(ctx *fasthttp.RequestCtx) {
-	if ctx.IsPost() && string(ctx.Path()) == "/payments" {
-		lb.handlePayments(ctx)
-		return
-	}
-
-	// Everything else: sync proxy
-	next := lb.nextIndex()
-	client := lb.clients[next]
-
-	req := &ctx.Request
-	resp := &ctx.Response
-
-	req.SetHost("") // empty for unix
-	if err := client.Do(req, resp); err != nil {
-		ctx.Error(err.Error(), fasthttp.StatusBadGateway)
-	}
-}
-
-func (lb *LoadBalancer) handlePayments(ctx *fasthttp.RequestCtx) {
-	// Immediately accept the request
-	ctx.SetStatusCode(fasthttp.StatusAccepted)
-
-	// Copy body for async use
-	raw := ctx.PostBody()
-	buf := bodyPool.Get().([]byte)[:0]
-	buf = append(buf, raw...) // copy
-
-	go func(body []byte) {
-		defer bodyPool.Put(body)
-		defaultHealth := health.GetHealth("default")
-		fallbackHealth := health.GetHealth("fallback")
-
-		healthInfo := HealthInfo{
-			DefaultFailing:          defaultHealth.Failing,
-			DefaultMinResponseTime:  defaultHealth.MinResponseTime,
-			FallbackFailing:         fallbackHealth.Failing,
-			FallbackMinResponseTime: fallbackHealth.MinResponseTime,
-		}
-
-		var original map[string]any
-		if err := json.Unmarshal(body, &original); err != nil {
-			log.Printf("[LB] Async unmarshal error: %v", err)
-			return
-		}
-
-		original["health_status"] = healthInfo
-
-		newBody, err := json.Marshal(original)
-		if err != nil {
-			log.Printf("[LB] Async marshal error: %v", err)
-			return
-		}
-
-		next := lb.nextIndex()
-		client := lb.clients[next]
-
-		req := fasthttp.AcquireRequest()
-		resp := fasthttp.AcquireResponse()
-		defer fasthttp.ReleaseRequest(req)
-		defer fasthttp.ReleaseResponse(resp)
-
-		req.SetRequestURI("http://unix/payments")
-		req.Header.SetMethod("POST")
-		req.Header.SetContentType("application/json")
-		req.SetHost("unix")
-		req.SetBodyRaw(newBody)
-
-		if err := client.Do(req, resp); err != nil {
-			log.Printf("[LB] Async request error: %v", err)
-		}
-	}(buf)
 }
 
 func (lb *LoadBalancer) nextIndex() int {
