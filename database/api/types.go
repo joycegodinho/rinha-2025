@@ -1,9 +1,10 @@
 package api
 
 type PaymentRequest struct {
-	RequestedAt string  `json:"requestedAt"`
-	Amount      float64 `json:"amount"`
-	ServerType  string  `json:"serverType"` // "default" or "fallback"
+	CorrelationID string  `json:"correlationId,omitempty"`
+	RequestedAt   string  `json:"requestedAt"`
+	Amount        float64 `json:"amount"`
+	ServerType    string  `json:"serverType"` // "default" or "fallback"
 }
 
 type Summary struct {
