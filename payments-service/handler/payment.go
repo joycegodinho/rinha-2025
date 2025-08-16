@@ -39,9 +39,18 @@ type PaymentPayload struct {
 	RequestedAt   time.Time `json:"requestedAt"`
 }
 
+// select only default
+// const (
+// 	incomingWorkerCount = 8
+// 	retryWorkerCount    = 10
+// 	retryDelay          = 10 * time.Millisecond
+// 	idleSleep           = 5 * time.Millisecond
+// )
+
+// select what is on
 const (
-	incomingWorkerCount = 8  // Number of workers for new payment requests
-	retryWorkerCount    = 10 // Lower to avoid flooding when under pressure
+	incomingWorkerCount = 10 // Number of workers for new payment requests
+	retryWorkerCount    = 8  // Lower to avoid flooding when under pressure
 	retryDelay          = 10 * time.Millisecond
 	idleSleep           = 5 * time.Millisecond
 )
@@ -194,6 +203,28 @@ func SaveToDB(body []byte, processor string) {
 }
 
 // Select only default if not failing
+// func SelectProcessor() string {
+// 	healthMu.RLock()
+// 	defer healthMu.RUnlock()
+
+// 	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
+// 		return ""
+// 	}
+// 	if !DefaultProcessorHealth.Failing {
+// 		return "default"
+// 	}
+// 	return ""
+// }
+
+// // Selects the processor based on health status
+// // const (
+// //
+// //	incomingWorkerCount = 15 // Number of workers for new payment requests
+// //	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
+// //	retryDelay          = 15 * time.Millisecond
+// //	idleSleep           = 5 * time.Millisecond
+// //
+// // )
 func SelectProcessor() string {
 	healthMu.RLock()
 	defer healthMu.RUnlock()
@@ -204,7 +235,7 @@ func SelectProcessor() string {
 	if !DefaultProcessorHealth.Failing {
 		return "default"
 	}
-	return ""
+	return "fallback"
 }
 
 func markProcessorAsFailing(proc string) {
