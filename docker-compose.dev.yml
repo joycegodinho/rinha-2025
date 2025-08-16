@@ -1,5 +1,6 @@
 x-base-env: &base-env
   DB_SOCKET_PATH: /sockets/database.sock
+  GC_MODE: off
 
 services:
   payments-service: &payments-service
@@ -50,6 +51,7 @@ services:
       - "9999:9999"
     environment:
       - PORT=9999
+      - GC_MODE=off
       - SOCKET1_PATH=/sockets/payments-service-1.sock
       - SOCKET2_PATH=/sockets/payments-service-2.sock
     volumes:
@@ -69,6 +71,7 @@ services:
       dockerfile: database/Dockerfile
     environment:
       - SOCKET_PATH=/sockets/database.sock
+      - GC_MODE=off
     volumes:
       - ./:/db/
       - sockets-volume:/sockets
