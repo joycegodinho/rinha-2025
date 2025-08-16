@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/config"
 	"database/db"
 	"database/handler"
 	"log"
@@ -8,10 +9,14 @@ import (
 	"os/signal"
 	"syscall"
 
+	"time"
+
 	"github.com/valyala/fasthttp"
 )
 
 func main() {
+	config.TuneGC()
+
 	database := db.NewDB()
 
 	paymentHandler := handler.PaymentHandler(database)
@@ -37,7 +42,21 @@ func main() {
 	}
 	_ = os.Remove(socketPath)
 
-	server := &fasthttp.Server{Handler: requestHandler}
+	server := &fasthttp.Server{
+		Handler:                       requestHandler,
+		ReadTimeout:                   700 * time.Millisecond,
+		WriteTimeout:                  700 * time.Millisecond,
+		ReadBufferSize:                1024,
+		WriteBufferSize:               1024,
+		DisableHeaderNamesNormalizing: true,
+		IdleTimeout:                   30 * time.Second,
+		NoDefaultDate:                 true,
+		NoDefaultServerHeader:         true,
+		NoDefaultContentType:          true,
+		Concurrency:                   10000,
+		DisableKeepalive:              false,
+		DisablePreParseMultipartForm:  true,
+	}
 
 	log.Printf("Database server starting on socket %s", socketPath)
 	if err := server.ListenAndServeUNIX(socketPath, 0666); err != nil {

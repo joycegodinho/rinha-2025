@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"payments-service/config"
 	"payments-service/handler"
 	"strings"
 	"time"
@@ -14,6 +15,9 @@ import (
 var fastClient *fasthttp.Client
 
 func main() {
+	// runtime.GOMAXPROCS(1)
+	config.TuneGC()
+
 	go handler.StartWorkers()
 
 	dbSocket := os.Getenv("DB_SOCKET_PATH")
@@ -25,8 +29,14 @@ func main() {
 		Dial: func(addr string) (net.Conn, error) {
 			return net.Dial("unix", dbSocket)
 		},
-		ReadTimeout:  700 * time.Millisecond,
-		WriteTimeout: 700 * time.Millisecond,
+		MaxConnsPerHost:               256,
+		ReadTimeout:                   700 * time.Millisecond,
+		WriteTimeout:                  700 * time.Millisecond,
+		ReadBufferSize:                1024,
+		WriteBufferSize:               1024,
+		NoDefaultUserAgentHeader:      true,
+		DisableHeaderNamesNormalizing: true,
+		DisablePathNormalizing:        true,
 	}
 
 	requestHandler := func(ctx *fasthttp.RequestCtx) {
@@ -34,6 +44,8 @@ func main() {
 		switch {
 		case ctx.IsPost() && strings.HasPrefix(path, "/payments"):
 			handler.PaymentHandler()(ctx)
+		case ctx.IsPost() && strings.HasPrefix(path, "/health-status-update"):
+			handler.HealthUpdateHandler()(ctx)
 		case ctx.IsGet() && strings.HasPrefix(path, "/payments-summary"):
 			handleProxy(ctx)
 		case ctx.IsPost() && strings.HasPrefix(path, "/purge-payments"):
@@ -49,8 +61,34 @@ func main() {
 	}
 	_ = os.Remove(socketPath)
 
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		log.Fatalf("Error creating UNIX listener: %v", err)
+	}
+
+	// Ensure correct permissions for other processes to access
+	if err := os.Chmod(socketPath, 0666); err != nil {
+		log.Fatalf("Failed to set socket permissions: %v", err)
+	}
+
+	server := &fasthttp.Server{
+		Handler:                       requestHandler,
+		ReadTimeout:                   700 * time.Millisecond,
+		WriteTimeout:                  700 * time.Millisecond,
+		ReadBufferSize:                1024,
+		WriteBufferSize:               1024,
+		DisableHeaderNamesNormalizing: true,
+		IdleTimeout:                   30 * time.Second,
+		NoDefaultDate:                 true,
+		NoDefaultServerHeader:         true,
+		NoDefaultContentType:          true,
+		Concurrency:                   10000,
+		DisableKeepalive:              false,
+		DisablePreParseMultipartForm:  true,
+	}
+
 	log.Printf("Payments Service running on socket %s", socketPath)
-	if err := fasthttp.ListenAndServeUNIX(socketPath, 0666, requestHandler); err != nil {
+	if err := server.Serve(ln); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 	log.Println("Payments Service stopped")
