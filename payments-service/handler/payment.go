@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	// "fmt"
 	"log"
 	"net"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	json "github.com/bytedance/sonic"
 
+	"github.com/buger/jsonparser"
 	"github.com/valyala/fasthttp"
 )
 
@@ -40,20 +42,20 @@ type PaymentPayload struct {
 }
 
 // select only default
-// const (
-// 	incomingWorkerCount = 8
-// 	retryWorkerCount    = 10
-// 	retryDelay          = 10 * time.Millisecond
-// 	idleSleep           = 5 * time.Millisecond
-// )
-
-// select what is on
 const (
-	incomingWorkerCount = 10 // Number of workers for new payment requests
-	retryWorkerCount    = 8  // Lower to avoid flooding when under pressure
+	incomingWorkerCount = 8
+	retryWorkerCount    = 10
 	retryDelay          = 10 * time.Millisecond
 	idleSleep           = 5 * time.Millisecond
 )
+
+// select what is on
+// const (
+// 	incomingWorkerCount = 10 // Number of workers for new payment requests
+// 	retryWorkerCount    = 8  // Lower to avoid flooding when under pressure
+// 	retryDelay          = 10 * time.Millisecond
+// 	idleSleep           = 5 * time.Millisecond
+// )
 
 var fastClient = &fasthttp.Client{
 	MaxConnsPerHost:               512,
@@ -91,15 +93,21 @@ var PayloadDBPool = sync.Pool{
 	},
 }
 
+var jobPool = sync.Pool{
+	New: func() interface{} { return new(PaymentJob) },
+}
+
 const MaxAttempts = 5
 
 func PaymentHandler() fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
-		var job *PaymentJob
+		job := jobPool.Get().(*PaymentJob)
+		*job = PaymentJob{} // reset
 
-		// start := time.Now()
-		_ = json.ConfigDefault.Unmarshal(ctx.PostBody(), &job)
-		// fmt.Printf("Time to unmarshal: %v\n", time.Since(start))
+		body := ctx.PostBody()
+
+		job.CorrelationID, _ = jsonparser.GetString(body, "correlationId")
+		job.Amount, _ = jsonparser.GetFloat(body, "amount")
 
 		job.Attempt = 0
 
@@ -131,7 +139,7 @@ func ProcessPayment(job *PaymentJob) bool {
 	defer PayloadPool.Put(buf)
 	buf.Reset()
 
-	if err := json.ConfigDefault.NewEncoder(buf).Encode(payload); err != nil {
+	if err := json.ConfigFastest.NewEncoder(buf).Encode(payload); err != nil {
 		log.Printf("[Payment] Error encoding payload: %v", err)
 		return false
 	}
@@ -203,28 +211,6 @@ func SaveToDB(body []byte, processor string) {
 }
 
 // Select only default if not failing
-// func SelectProcessor() string {
-// 	healthMu.RLock()
-// 	defer healthMu.RUnlock()
-
-// 	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
-// 		return ""
-// 	}
-// 	if !DefaultProcessorHealth.Failing {
-// 		return "default"
-// 	}
-// 	return ""
-// }
-
-// // Selects the processor based on health status
-// // const (
-// //
-// //	incomingWorkerCount = 15 // Number of workers for new payment requests
-// //	retryWorkerCount    = 5  // Lower to avoid flooding when under pressure
-// //	retryDelay          = 15 * time.Millisecond
-// //	idleSleep           = 5 * time.Millisecond
-// //
-// // )
 func SelectProcessor() string {
 	healthMu.RLock()
 	defer healthMu.RUnlock()
@@ -235,8 +221,28 @@ func SelectProcessor() string {
 	if !DefaultProcessorHealth.Failing {
 		return "default"
 	}
-	return "fallback"
+	return ""
 }
+
+// Select based in health and time
+// const gracefulLagMs = 1000
+// func SelectProcessor() string {
+// 	healthMu.RLock()
+// 	defer healthMu.RUnlock()
+// 	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
+// 		return ""
+// 	}
+// 	if !DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
+// 		return "default"
+// 	}
+// 	if DefaultProcessorHealth.Failing && !FallbackProcessorHealth.Failing {
+// 		return "fallback"
+// 	}
+// 	if DefaultProcessorHealth.MinResponseTime <= FallbackProcessorHealth.MinResponseTime+gracefulLagMs {
+// 		return "default"
+// 	}
+// 	return "fallback"
+// }
 
 func markProcessorAsFailing(proc string) {
 	healthMu.Lock()
