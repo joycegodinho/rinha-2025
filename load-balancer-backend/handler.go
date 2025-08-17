@@ -44,3 +44,37 @@ func (lb *LoadBalancer) Handler(ctx *fasthttp.RequestCtx) {
 		ctx.Error(err.Error(), fasthttp.StatusBadGateway)
 	}
 }
+
+// func (lb *LoadBalancer) Handler(ctx *fasthttp.RequestCtx) {
+// 	next := lb.nextIndex()
+// 	client := lb.clients[next]
+
+// 	req := &ctx.Request
+// 	resp := &ctx.Response
+
+// 	req.SetHost("")
+
+// 	if err := client.Do(req, resp); err != nil {
+// 		ctx.Error(err.Error(), fasthttp.StatusBadGateway)
+// 	}
+// }
+
+// func (lb *LoadBalancer) Handler(ctx *fasthttp.RequestCtx) {
+// 	next := lb.nextIndex()
+// 	client := lb.clients[next]
+//
+// 	req := fasthttp.AcquireRequest()
+// 	resp := fasthttp.AcquireResponse()
+// 	defer fasthttp.ReleaseRequest(req)
+// 	defer fasthttp.ReleaseResponse(resp)
+//
+// 	ctx.Request.CopyTo(req)
+// 	req.SetHost("") // required when proxying
+
+// 	if err := client.Do(req, resp); err != nil {
+// 		ctx.Error(err.Error(), fasthttp.StatusBadGateway)
+// 		return
+// 	}
+//
+// 	resp.CopyTo(&ctx.Response)
+// }
