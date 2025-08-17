@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -23,6 +24,7 @@ func (lb *LoadBalancer) nextIndex() int {
 }
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	config.TuneGC()
 
 	socketPaths := []string{
@@ -45,17 +47,23 @@ func main() {
 	}
 
 	var clients []*fasthttp.HostClient
+	dialer := &net.Dialer{
+		Timeout:   200 * time.Millisecond,
+		KeepAlive: 30 * time.Second,
+	}
 	for _, socketPath := range socketPaths {
 		client := &fasthttp.HostClient{
 			IsTLS: false,
 			Dial: func(addr string) (net.Conn, error) {
-				return net.Dial("unix", socketPath)
+				return dialer.Dial("unixpacket", socketPath)
 			},
-			ReadTimeout:  700 * time.Millisecond,
-			WriteTimeout: 700 * time.Millisecond,
-			// MaxConns:                      256,
-			ReadBufferSize:                1024,
-			WriteBufferSize:               1024,
+			ReadTimeout:         300 * time.Millisecond,
+			WriteTimeout:        300 * time.Millisecond,
+			MaxConns:            1024,
+			MaxIdleConnDuration: 30 * time.Second,
+			ReadBufferSize:      512,
+			WriteBufferSize:     512,
+
 			NoDefaultUserAgentHeader:      true,
 			DisableHeaderNamesNormalizing: true,
 			DisablePathNormalizing:        true,

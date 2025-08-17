@@ -6,6 +6,7 @@ import (
 	"os"
 	"payments-service/config"
 	"payments-service/handler"
+	"runtime"
 	"strings"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 var fastClient *fasthttp.Client
 
 func main() {
-	// runtime.GOMAXPROCS(1)
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	config.TuneGC()
 
 	go handler.StartWorkers()
@@ -61,7 +62,7 @@ func main() {
 	}
 	_ = os.Remove(socketPath)
 
-	ln, err := net.Listen("unix", socketPath)
+	ln, err := net.Listen("unixpacket", socketPath)
 	if err != nil {
 		log.Fatalf("Error creating UNIX listener: %v", err)
 	}
