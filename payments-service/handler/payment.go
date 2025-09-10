@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+
 	// "fmt"
 	"log"
 	"net"
@@ -42,20 +43,20 @@ type PaymentPayload struct {
 }
 
 // select only default
-const (
-	incomingWorkerCount = 8
-	retryWorkerCount    = 10
-	retryDelay          = 10 * time.Millisecond
-	idleSleep           = 5 * time.Millisecond
-)
-
-// select what is on
 // const (
-// 	incomingWorkerCount = 10 // Number of workers for new payment requests
-// 	retryWorkerCount    = 8  // Lower to avoid flooding when under pressure
+// 	incomingWorkerCount = 8
+// 	retryWorkerCount    = 10
 // 	retryDelay          = 10 * time.Millisecond
 // 	idleSleep           = 5 * time.Millisecond
 // )
+
+// select what is on
+const (
+	incomingWorkerCount = 10 // Number of workers for new payment requests
+	retryWorkerCount    = 8  // Lower to avoid flooding when under pressure
+	retryDelay          = 10 * time.Millisecond
+	idleSleep           = 5 * time.Millisecond
+)
 
 var fastClient = &fasthttp.Client{
 	MaxConnsPerHost:               512,
@@ -155,7 +156,16 @@ func ProcessPayment(job *PaymentJob) bool {
 	defer fasthttp.ReleaseResponse(resp)
 
 	err := fastClient.DoTimeout(req, resp, 8*time.Second)
-	if err != nil || resp.StatusCode() >= 500 {
+	if resp.StatusCode() == 200 {
+		if err != nil {
+			log.Printf("[Payment] Error sending request to %s: %v", processor, err)
+			markProcessorAsFailing(processor)
+		}
+		SaveToDB(buf.Bytes(), processor)
+		return true
+	}
+
+	if resp.StatusCode() >= 500 {
 		markProcessorAsFailing(processor)
 		job.Attempt++
 		if job.Attempt > MaxAttempts {
@@ -166,8 +176,12 @@ func ProcessPayment(job *PaymentJob) bool {
 		return false
 	}
 
-	SaveToDB(buf.Bytes(), processor)
-	return true
+	if resp.StatusCode() >= 400 {
+		log.Printf("[Payment] Client error from %s: %d", processor, resp.StatusCode())
+		return false
+	}
+
+	return false
 }
 
 func SaveToDB(body []byte, processor string) {
@@ -211,38 +225,39 @@ func SaveToDB(body []byte, processor string) {
 }
 
 // Select only default if not failing
-func SelectProcessor() string {
-	healthMu.RLock()
-	defer healthMu.RUnlock()
-
-	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
-		return ""
-	}
-	if !DefaultProcessorHealth.Failing {
-		return "default"
-	}
-	return ""
-}
-
-// Select based in health and time
-// const gracefulLagMs = 1000
 // func SelectProcessor() string {
 // 	healthMu.RLock()
 // 	defer healthMu.RUnlock()
+
 // 	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
 // 		return ""
 // 	}
-// 	if !DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
+// 	if !DefaultProcessorHealth.Failing {
 // 		return "default"
 // 	}
-// 	if DefaultProcessorHealth.Failing && !FallbackProcessorHealth.Failing {
-// 		return "fallback"
-// 	}
-// 	if DefaultProcessorHealth.MinResponseTime <= FallbackProcessorHealth.MinResponseTime+gracefulLagMs {
-// 		return "default"
-// 	}
-// 	return "fallback"
+// 	return ""
 // }
+
+// Select based in health and time
+const gracefulLagMs = 200
+
+func SelectProcessor() string {
+	// healthMu.RLock()
+	// defer healthMu.RUnlock()
+	if DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
+		return ""
+	}
+	if !DefaultProcessorHealth.Failing && FallbackProcessorHealth.Failing {
+		return "default"
+	}
+	if DefaultProcessorHealth.Failing && !FallbackProcessorHealth.Failing {
+		return "fallback"
+	}
+	if DefaultProcessorHealth.MinResponseTime <= FallbackProcessorHealth.MinResponseTime+gracefulLagMs {
+		return "default"
+	}
+	return "fallback"
+}
 
 func markProcessorAsFailing(proc string) {
 	healthMu.Lock()
