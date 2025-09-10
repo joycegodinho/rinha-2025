@@ -158,7 +158,6 @@ func ProcessPayment(job *PaymentJob) bool {
 	err := fastClient.DoTimeout(req, resp, 8*time.Second)
 	if resp.StatusCode() == 200 {
 		if err != nil {
-			log.Printf("[Payment] Error sending request to %s: %v", processor, err)
 			markProcessorAsFailing(processor)
 		}
 		SaveToDB(buf.Bytes(), processor)
