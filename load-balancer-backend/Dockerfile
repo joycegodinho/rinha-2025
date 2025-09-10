@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS base
+FROM golang:1.25-alpine AS base
 EXPOSE 9999
 WORKDIR /lbb
 FROM base AS builder
